@@ -10,21 +10,36 @@ import { haversineDistance } from "../utils/healper";
 
 export const getAdminDashboardStats = async (req: AuthRequest, res: Response) => {
     try {
+        const period = (req.query.period as string) || "today";
+
+        // Derive period date range
+        const now = new Date();
+        const periodEnd = new Date(now);
+        periodEnd.setHours(23, 59, 59, 999);
+
+        let periodStart = new Date(now);
+        if (period === "week") {
+            const dayOfWeek = periodStart.getDay();
+            const diffToMonday = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+            periodStart.setDate(periodStart.getDate() - diffToMonday);
+        } else if (period === "month") {
+            periodStart = new Date(now.getFullYear(), now.getMonth(), 1);
+        }
+        periodStart.setHours(0, 0, 0, 0);
+
+        // Today boundaries (activeNow is always real-time)
         const today = new Date();
         today.setHours(0, 0, 0, 0);
-
         const endOfDay = new Date();
         endOfDay.setHours(23, 59, 59, 999);
 
         // 1. Total Employees
         const totalEmployees = await User.countDocuments({ role: "employee", isActive: true });
 
-        // 2. Active Now (Employees who have punched in but not out today, or recently logged a location)
-        // First find users who punched in today
+        // 2. Active Now (always today-based)
         const punchesToday = await Punch.find({ date: { $gte: today, $lte: endOfDay } }).sort({ time: 1 });
 
-        // Group by user to find their last punch
-        const userPunchStatus = new Map<string, string>(); // userId -> "in" | "out"
+        const userPunchStatus = new Map<string, string>();
         punchesToday.forEach(punch => {
             userPunchStatus.set(punch.user.toString(), punch.type);
         });
@@ -34,27 +49,29 @@ export const getAdminDashboardStats = async (req: AuthRequest, res: Response) =>
             if (status === "in") activeNowCount++;
         });
 
-        // 3. Punctuality Overview (On time vs Late)
-        // Assuming 09:30 AM is the cutoff for "On Time"
-        const onTimeCutoff = new Date(today);
-        onTimeCutoff.setHours(9, 30, 0, 0);
+        // 3. Punctuality (period-based: first punch-in per user per day)
+        const punchesInPeriod = period === "today"
+            ? punchesToday
+            : await Punch.find({ date: { $gte: periodStart, $lte: periodEnd } }).sort({ time: 1 });
 
-        let onTimeCount = 0;
-        let lateCount = 0;
-
-        // Get the first punch-in for each user
+        // key = "userId-YYYY-MM-DD" to track first punch-in each day per user
         const firstPunches = new Map<string, Date>();
-        punchesToday.forEach(punch => {
+        punchesInPeriod.forEach(punch => {
             if (punch.type === "in") {
-                const existing = firstPunches.get(punch.user.toString());
+                const dateStr = punch.time.toISOString().split("T")[0];
+                const key = `${punch.user}-${dateStr}`;
+                const existing = firstPunches.get(key);
                 if (!existing || punch.time < existing) {
-                    firstPunches.set(punch.user.toString(), punch.time);
+                    firstPunches.set(key, punch.time);
                 }
             }
         });
 
+        let onTimeCount = 0;
+        let lateCount = 0;
         firstPunches.forEach(time => {
-            if (time <= onTimeCutoff) onTimeCount++;
+            const h = time.getHours(), m = time.getMinutes();
+            if (h < 9 || (h === 9 && m <= 30)) onTimeCount++;
             else lateCount++;
         });
 
@@ -63,8 +80,11 @@ export const getAdminDashboardStats = async (req: AuthRequest, res: Response) =>
             { name: "Late", value: lateCount }
         ];
 
-        // 4. Recent Anomalies
-        const recentAnomalies = await Alert.find({ resolved: false })
+        // 4. Recent Anomalies (period-based)
+        const recentAnomalies = await Alert.find({
+            resolved: false,
+            timestamp: { $gte: periodStart, $lte: periodEnd }
+        })
             .populate("user", "name employeeId")
             .sort({ timestamp: -1 })
             .limit(10)
@@ -73,20 +93,44 @@ export const getAdminDashboardStats = async (req: AuthRequest, res: Response) =>
         const formattedAnomalies = recentAnomalies.map(a => ({
             id: a._id,
             employee: (a.user as any)?.name || "Unknown",
-            type: a.type.replace(/_/g, " ").replace(/\b\w/g, l => l.toUpperCase()), // Title case
+            type: a.type.replace(/_/g, " ").replace(/\b\w/g, (l: string) => l.toUpperCase()),
             timestamp: a.timestamp,
             severity: ["no_movement", "gps_disabled", "device_off"].includes(a.type) ? "High" : "Medium",
             status: a.resolved ? "Resolved" : "Active",
             description: a.description
         }));
 
+        // 5. Top Performers (aggregate daily Performance scores within the period)
+        const topPerfsAgg = await Performance.aggregate([
+            { $match: { period: "daily", periodStart: { $gte: periodStart, $lte: periodEnd } } },
+            { $group: { _id: "$user", totalScore: { $sum: "$score" }, days: { $sum: 1 } } },
+            { $addFields: { avgScore: { $divide: ["$totalScore", "$days"] } } },
+            { $sort: { avgScore: -1 } },
+            { $limit: 5 }
+        ]);
+
+        const perfUserIds = topPerfsAgg.map(p => p._id);
+        const perfUsers = await User.find({ _id: { $in: perfUserIds } }).select("name department").lean();
+        const perfUserMap = new Map(perfUsers.map((u: any) => [u._id.toString(), u]));
+
+        const topPerformers = topPerfsAgg.map(p => {
+            const user: any = perfUserMap.get(p._id.toString()) || {};
+            return {
+                name: user.name || "Unknown",
+                department: user.department || "Unknown",
+                score: Math.round(p.avgScore * 10) / 10
+            };
+        });
+
         res.status(200).json({
             success: true,
             data: {
+                period,
                 totalEmployees,
                 activeNow: activeNowCount,
                 punctuality,
                 recentAnomalies: formattedAnomalies,
+                topPerformers,
             }
         });
     } catch (error) {

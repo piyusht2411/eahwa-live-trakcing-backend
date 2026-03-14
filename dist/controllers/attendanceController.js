@@ -16,21 +16,26 @@ exports.getAttendance = void 0;
 const punch_1 = __importDefault(require("../models/punch"));
 const getAttendance = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
-        const { month } = req.query; // YYYY-MM
+        const { date } = req.query; // Expected format: YYYY-MM-DD (single day filter)
         let startDate;
         let endDate;
-        if (month && typeof month === "string") {
-            const [yearStr, monthStr] = month.split("-");
+        if (date && typeof date === "string") {
+            // Parse YYYY-MM-DD for a specific day
+            const [yearStr, monthStr, dayStr] = date.split("-");
             const year = parseInt(yearStr, 10);
             const m = parseInt(monthStr, 10) - 1; // 0-indexed month
-            startDate = new Date(year, m, 1);
-            endDate = new Date(year, m + 1, 0, 23, 59, 59, 999);
+            const d = parseInt(dayStr, 10);
+            startDate = new Date(year, m, d); // 00:00:00
+            endDate = new Date(year, m, d, 23, 59, 59, 999); // 23:59:59.999
         }
         else {
-            // Default to current month
+            // No filter applied → return ONLY today's attendance
             const now = new Date();
-            startDate = new Date(now.getFullYear(), now.getMonth(), 1);
-            endDate = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+            const year = now.getFullYear();
+            const month = now.getMonth();
+            const day = now.getDate();
+            startDate = new Date(year, month, day); // 00:00:00 today
+            endDate = new Date(year, month, day, 23, 59, 59, 999); // 23:59:59.999 today
         }
         const attendanceRecords = yield punch_1.default.find({
             date: { $gte: startDate, $lte: endDate }
@@ -38,8 +43,6 @@ const getAttendance = (req, res) => __awaiter(void 0, void 0, void 0, function* 
             .populate("user", "name employeeId department")
             .sort({ date: -1, time: -1 })
             .lean();
-        // The data can be aggregated by date and user if needed, but returning a raw list is also fine
-        // depending on the exact admin needs. Returning plain records for now.
         res.status(200).json({
             success: true,
             data: attendanceRecords

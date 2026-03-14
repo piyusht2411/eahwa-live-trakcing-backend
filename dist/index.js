@@ -60,6 +60,7 @@ const performance_1 = __importDefault(require("./routes/performance"));
 const anomaly_1 = __importDefault(require("./routes/anomaly"));
 const visit_1 = __importDefault(require("./routes/visit"));
 const heartbeat_1 = __importDefault(require("./routes/heartbeat"));
+const heatmap_1 = __importDefault(require("./routes/heatmap"));
 const morgan_1 = __importDefault(require("morgan"));
 const admin = __importStar(require("firebase-admin"));
 dotenv_1.default.config();
@@ -90,7 +91,9 @@ var corsOptions = {
         "https://eashwa-frontend-iptp.vercel.app",
         "https://eashwastock.in",
         "https://www.eashwastock.in",
-        "https://eashwa-live-tracking-admin.vercel.app"
+        "https://eashwa-live-tracking-admin.vercel.app",
+        "https://chilweeindia.com",
+        "https://www.chilweeindia.com"
     ],
     credentials: true,
 };
@@ -116,6 +119,7 @@ app.use("/api/visits", visit_1.default);
 app.use("/api/breaks", break_1.default); // Alias for admin break listing
 app.use("/api/heartbeat", heartbeat_1.default);
 app.use("/api/stats", stats_1.default);
+app.use("/api/heatmap", heatmap_1.default);
 app.use("/api/admin", admin_1.default);
 app.use("/api/users", user_1.default);
 app.use("/api/attendance", attendance_1.default);

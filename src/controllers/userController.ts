@@ -3,8 +3,12 @@ import { AuthRequest as Request } from "../types/authRequest";
 import User from "../models/user";
 import Punch from "../models/punch";
 import LocationLog from "../models/locationlogs";
+import multer from "multer";
+import cloudinary from "../config/cloudinary";
+import bcrypt from "bcrypt";
 
 const LOCATION_ACTIVE_THRESHOLD_MS = 15 * 60 * 1000; // 15 minutes
+const upload = multer({ storage: multer.memoryStorage() });
 
 const getTodayRange = () => {
     const start = new Date();
@@ -144,30 +148,114 @@ export const getUserById = async (req: Request, res: Response) => {
     }
 };
 
-// PUT /api/users/:id
-export const updateUser = async (req: Request, res: Response) => {
+export const getAdminsAndManagers = async (req: Request, res: Response) => {
+  try {
+    const users = await User.find({ 
+      role: { $in: ["admin", "manager"] },
+      isActive: true // Optional: Only active users
+    }).select("name _id").lean(); // Use lean() for better performance since we only need basic fields
+
+    // Transform to include a display label for the frontend select (name + ID for clarity)
+    const transformedUsers = users.map(user => ({
+      id: user._id.toString(),
+      name: user.name
+    }));
+
+    res.status(200).json({
+      success: true,
+      data: transformedUsers
+    });
+  } catch (error) {
+    console.error("Error fetching admins and managers:", error);
+    res.status(500).json({ 
+      success: false,
+      message: "Server error while fetching admins and managers" 
+    });
+  }
+}
+
+export const updateUser = [
+  upload.single("profilePicture"), // optional file upload
+  async (req: Request, res: Response) => {
+    const { id } = req.params;
+    const updateData: any = { ...req.body };
+
     try {
-        const { id } = req.params;
-        const updateData = req.body;
+      const employee = await User.findById(id);
+      if (!employee || employee.role !== "employee") {
+        return res.status(404).json({ message: "Employee not found" });
+      }
 
-        // Ensure we don't accidentally hash passwords here if pass isn't handled correctly
-        if (updateData.password) {
-            delete updateData.password;
-        }
-
-        const user = await User.findByIdAndUpdate(id, updateData, { new: true, runValidators: true }).select("-password");
-
-        if (!user) {
-            return res.status(404).json({ success: false, message: "User not found" });
-        }
-
-        res.status(200).json({
-            success: true,
-            message: "User updated successfully",
-            data: user
+      // === Upload new profile picture if file is sent ===
+      if (req.file) {
+        const result = await new Promise((resolve, reject) => {
+          cloudinary.uploader.upload_stream(
+            { resource_type: "auto" },
+            (error, result) => {
+              if (error) reject(error);
+              else resolve(result);
+            }
+          ).end(req.file!.buffer);
         });
-    } catch (error) {
-        console.error("Update user error:", error);
-        res.status(500).json({ success: false, message: "Server error" });
+
+        updateData.profilePicture = (result as any).secure_url;
+      }
+
+      // === Hash password if provided ===
+      if (updateData.password) {
+        const salt = await bcrypt.genSalt(10);
+        updateData.password = await bcrypt.hash(updateData.password, salt);
+      }
+
+      // === Handle managerId → managedBy mapping (same as register) ===
+      if (updateData.managerId !== undefined) {
+        updateData.managedBy = updateData.managerId;
+        delete updateData.managerId;
+      }
+
+      // Update (works for both PUT and PATCH)
+      const updatedEmployee = await User.findByIdAndUpdate(
+        id,
+        { $set: updateData },
+        { new: true, runValidators: true }
+      ).select("-password");
+
+      res.status(200).json({
+        success: true,
+        message: "Employee updated successfully",
+        data: updatedEmployee,
+      });
+    } catch (error: any) {
+      console.error("Update employee error:", error);
+
+      // Handle duplicate email error (if email is unique in schema)
+      if (error.code === 11000) {
+        return res.status(400).json({ message: "Email already exists" });
+      }
+
+      res.status(500).json({ message: "Server error" });
     }
+  },
+];
+
+// ====================== DELETE EMPLOYEE (SOFT DELETE) ======================
+export const deleteUser = async (req: Request, res: Response) => {
+  try {
+    const employee = await User.findById(req.params.id);
+
+    if (!employee || employee.role !== "employee") {
+      return res.status(404).json({ message: "Employee not found" });
+    }
+
+    // Soft delete (matches the isActive filter used in getAdminsAndManagers)
+    await User.findByIdAndUpdate(req.params.id, { isActive: false });
+
+    res.status(200).json({
+      success: true,
+      message: "Employee deactivated successfully",
+    });
+  } catch (error) {
+    console.error("Delete employee error:", error);
+    res.status(500).json({ message: "Server error" });
+  }
 };

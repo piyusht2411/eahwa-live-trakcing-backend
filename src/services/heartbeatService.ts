@@ -7,7 +7,7 @@ import { sendFCMNotification, sendWhatsAppAlert } from "./notificationService";
 
 export const checkHeartbeats = async () => {
   try {
-    const THRESHOLD_MINUTES = 2;
+    const THRESHOLD_MINUTES = 20;
     const cutoffTime = new Date(Date.now() - THRESHOLD_MINUTES * 60 * 1000);
 
     // Find users whose last location update was before the cutoff time
@@ -24,14 +24,16 @@ export const checkHeartbeats = async () => {
     for (const user of staleUsers) {
       // 1. Check if user is currently punched in today
       const lastPunch = await Punch.findOne({ user: user._id, date: { $gte: today } }).sort({ time: -1 });
-      
+
       if (!lastPunch || lastPunch.type !== "in") {
+        console.log("User is not punched in or already punched out", user.name);
         continue; // Not punched in or already punched out
       }
 
       // 2. Check if user is currently on an active break
       const activeBreak = await Break.findOne({ user: user._id, endTime: { $exists: false } });
       if (activeBreak) {
+        console.log("User is on an active break", user.name);
         continue; // User is on a valid break, ignore silence
       }
 
@@ -43,7 +45,7 @@ export const checkHeartbeats = async () => {
         date: now,
         time: now,
         // Use last known location from the in-punch since we don't have current
-        location: lastPunch.location, 
+        location: lastPunch.location,
         isAutomatic: true,
         reason: "Location sharing stopped",
         selfie: null, // No selfie for auto punch-out
@@ -80,7 +82,7 @@ export const checkHeartbeats = async () => {
       autoPunchedOutCount++;
       const admins = await User.find({ role: "admin", fcmToken: { $ne: null } });
       const fcmTokens = admins.map(a => a.fcmToken as string).filter(Boolean);
-      
+
       const title = "⚠️ Location Sharing Stopped";
       const body = `${user.name} stopped sending location and was auto punched out.`;
 
@@ -91,7 +93,7 @@ export const checkHeartbeats = async () => {
           console.error("Failed to send FCM for auto punch-out:", fcmError);
         }
       }
-      
+
       // WhatsApp to HR if configured
       if (process.env.HR_WHATSAPP_TO) {
         try {

@@ -12,11 +12,15 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.updateUser = exports.getUserById = exports.getAllUsers = void 0;
+exports.deleteUser = exports.updateUser = exports.getAdminsAndManagers = exports.getUserById = exports.getAllUsers = void 0;
 const user_1 = __importDefault(require("../models/user"));
 const punch_1 = __importDefault(require("../models/punch"));
 const locationlogs_1 = __importDefault(require("../models/locationlogs"));
+const multer_1 = __importDefault(require("multer"));
+const cloudinary_1 = __importDefault(require("../config/cloudinary"));
+const bcrypt_1 = __importDefault(require("bcrypt"));
 const LOCATION_ACTIVE_THRESHOLD_MS = 15 * 60 * 1000; // 15 minutes
+const upload = (0, multer_1.default)({ storage: multer_1.default.memoryStorage() });
 const getTodayRange = () => {
     const start = new Date();
     start.setHours(0, 0, 0, 0);
@@ -128,28 +132,98 @@ const getUserById = (req, res) => __awaiter(void 0, void 0, void 0, function* ()
     }
 });
 exports.getUserById = getUserById;
-// PUT /api/users/:id
-const updateUser = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+const getAdminsAndManagers = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
-        const { id } = req.params;
-        const updateData = req.body;
-        // Ensure we don't accidentally hash passwords here if pass isn't handled correctly
-        if (updateData.password) {
-            delete updateData.password;
-        }
-        const user = yield user_1.default.findByIdAndUpdate(id, updateData, { new: true, runValidators: true }).select("-password");
-        if (!user) {
-            return res.status(404).json({ success: false, message: "User not found" });
-        }
+        const users = yield user_1.default.find({
+            role: { $in: ["admin", "manager"] },
+            isActive: true // Optional: Only active users
+        }).select("name _id").lean(); // Use lean() for better performance since we only need basic fields
+        // Transform to include a display label for the frontend select (name + ID for clarity)
+        const transformedUsers = users.map(user => ({
+            id: user._id.toString(),
+            name: user.name
+        }));
         res.status(200).json({
             success: true,
-            message: "User updated successfully",
-            data: user
+            data: transformedUsers
         });
     }
     catch (error) {
-        console.error("Update user error:", error);
-        res.status(500).json({ success: false, message: "Server error" });
+        console.error("Error fetching admins and managers:", error);
+        res.status(500).json({
+            success: false,
+            message: "Server error while fetching admins and managers"
+        });
     }
 });
-exports.updateUser = updateUser;
+exports.getAdminsAndManagers = getAdminsAndManagers;
+exports.updateUser = [
+    upload.single("profilePicture"), // optional file upload
+    (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+        const { id } = req.params;
+        const updateData = Object.assign({}, req.body);
+        try {
+            const employee = yield user_1.default.findById(id);
+            if (!employee || employee.role !== "employee") {
+                return res.status(404).json({ message: "Employee not found" });
+            }
+            // === Upload new profile picture if file is sent ===
+            if (req.file) {
+                const result = yield new Promise((resolve, reject) => {
+                    cloudinary_1.default.uploader.upload_stream({ resource_type: "auto" }, (error, result) => {
+                        if (error)
+                            reject(error);
+                        else
+                            resolve(result);
+                    }).end(req.file.buffer);
+                });
+                updateData.profilePicture = result.secure_url;
+            }
+            // === Hash password if provided ===
+            if (updateData.password) {
+                const salt = yield bcrypt_1.default.genSalt(10);
+                updateData.password = yield bcrypt_1.default.hash(updateData.password, salt);
+            }
+            // === Handle managerId → managedBy mapping (same as register) ===
+            if (updateData.managerId !== undefined) {
+                updateData.managedBy = updateData.managerId;
+                delete updateData.managerId;
+            }
+            // Update (works for both PUT and PATCH)
+            const updatedEmployee = yield user_1.default.findByIdAndUpdate(id, { $set: updateData }, { new: true, runValidators: true }).select("-password");
+            res.status(200).json({
+                success: true,
+                message: "Employee updated successfully",
+                data: updatedEmployee,
+            });
+        }
+        catch (error) {
+            console.error("Update employee error:", error);
+            // Handle duplicate email error (if email is unique in schema)
+            if (error.code === 11000) {
+                return res.status(400).json({ message: "Email already exists" });
+            }
+            res.status(500).json({ message: "Server error" });
+        }
+    }),
+];
+// ====================== DELETE EMPLOYEE (SOFT DELETE) ======================
+const deleteUser = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    try {
+        const employee = yield user_1.default.findById(req.params.id);
+        if (!employee || employee.role !== "employee") {
+            return res.status(404).json({ message: "Employee not found" });
+        }
+        // Soft delete (matches the isActive filter used in getAdminsAndManagers)
+        yield user_1.default.findByIdAndUpdate(req.params.id, { isActive: false });
+        res.status(200).json({
+            success: true,
+            message: "Employee deactivated successfully",
+        });
+    }
+    catch (error) {
+        console.error("Delete employee error:", error);
+        res.status(500).json({ message: "Server error" });
+    }
+});
+exports.deleteUser = deleteUser;

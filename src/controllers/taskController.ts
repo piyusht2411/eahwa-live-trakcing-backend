@@ -55,10 +55,17 @@ export const submitTask = [
 ];
 
 export const getTasks = async (req: any, res: Response) => {
+  console.log(req.user);
   const { userId, start, end } = req.query;
 
   try {
-    let query: any = { date: { $gte: new Date(start as string), $lte: new Date(end as string) } };
+    const startDate = start ? new Date(start as string) : null;
+    const endDate = end ? new Date(end as string) : null;
+
+    let query: any = {};
+    if (startDate && !isNaN(startDate.getTime()) && endDate && !isNaN(endDate.getTime())) {
+      query.date = { $gte: startDate, $lte: endDate };
+    }
     if (req.user.role === "manager") {
       const team = await User.find({ managedBy: req.user._id }).select("_id");
       query.user = { $in: team.map((u: any) => u._id) };
@@ -69,6 +76,7 @@ export const getTasks = async (req: any, res: Response) => {
     const tasks = await Task.find(query).populate("user", "name employeeId");
     res.json(tasks);
   } catch (error) {
+    console.log(error);
     res.status(500).json({ message: "Error" });
   }
 };

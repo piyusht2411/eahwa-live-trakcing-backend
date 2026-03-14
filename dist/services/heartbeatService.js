@@ -21,7 +21,7 @@ const googleSheetsService_1 = require("./googleSheetsService");
 const notificationService_1 = require("./notificationService");
 const checkHeartbeats = () => __awaiter(void 0, void 0, void 0, function* () {
     try {
-        const THRESHOLD_MINUTES = 2;
+        const THRESHOLD_MINUTES = 20;
         const cutoffTime = new Date(Date.now() - THRESHOLD_MINUTES * 60 * 1000);
         // Find users whose last location update was before the cutoff time
         const staleUsers = yield user_1.default.find({
@@ -35,11 +35,13 @@ const checkHeartbeats = () => __awaiter(void 0, void 0, void 0, function* () {
             // 1. Check if user is currently punched in today
             const lastPunch = yield punch_1.default.findOne({ user: user._id, date: { $gte: today } }).sort({ time: -1 });
             if (!lastPunch || lastPunch.type !== "in") {
+                console.log("User is not punched in or already punched out", user.name);
                 continue; // Not punched in or already punched out
             }
             // 2. Check if user is currently on an active break
             const activeBreak = yield break_1.default.findOne({ user: user._id, endTime: { $exists: false } });
             if (activeBreak) {
+                console.log("User is on an active break", user.name);
                 continue; // User is on a valid break, ignore silence
             }
             // 3. User is punched in, not on break, and hasn't sent location for 20 mins. AUTO PUNCH OUT.

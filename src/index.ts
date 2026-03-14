@@ -22,6 +22,7 @@ import performanceRoutes from "./routes/performance";
 import anomalyRoutes from "./routes/anomaly";
 import visitRoutes from "./routes/visit";
 import heartbeatRoutes from "./routes/heartbeat";
+import heatmapRoutes from "./routes/heatmap";
 import morgan from "morgan";
 import * as admin from "firebase-admin";
 
@@ -66,7 +67,9 @@ var corsOptions = {
     "https://eashwa-frontend-iptp.vercel.app",
     "https://eashwastock.in",
     "https://www.eashwastock.in",
-    "https://eashwa-live-tracking-admin.vercel.app"
+    "https://eashwa-live-tracking-admin.vercel.app",
+    "https://chilweeindia.com",
+    "https://www.chilweeindia.com"
   ],
   credentials: true,
 };
@@ -93,6 +96,7 @@ app.use("/api/visits", visitRoutes);
 app.use("/api/breaks", breakRoutes); // Alias for admin break listing
 app.use("/api/heartbeat", heartbeatRoutes);
 app.use("/api/stats", statsRoutes);
+app.use("/api/heatmap", heatmapRoutes);
 app.use("/api/admin", adminRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/attendance", attendanceRoutes);

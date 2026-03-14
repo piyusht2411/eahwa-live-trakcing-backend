@@ -60,9 +60,15 @@ exports.submitTask = [
     }),
 ];
 const getTasks = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    console.log(req.user);
     const { userId, start, end } = req.query;
     try {
-        let query = { date: { $gte: new Date(start), $lte: new Date(end) } };
+        const startDate = start ? new Date(start) : null;
+        const endDate = end ? new Date(end) : null;
+        let query = {};
+        if (startDate && !isNaN(startDate.getTime()) && endDate && !isNaN(endDate.getTime())) {
+            query.date = { $gte: startDate, $lte: endDate };
+        }
         if (req.user.role === "manager") {
             const team = yield user_1.default.find({ managedBy: req.user._id }).select("_id");
             query.user = { $in: team.map((u) => u._id) };
@@ -74,6 +80,7 @@ const getTasks = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
         res.json(tasks);
     }
     catch (error) {
+        console.log(error);
         res.status(500).json({ message: "Error" });
     }
 });

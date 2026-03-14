@@ -2,68 +2,108 @@
 import { Request, Response } from "express";
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
+import multer from "multer";
+import cloudinary from "../config/cloudinary";
 import User from "../models/user";
-import { clearGlobalAppDefaultCred } from "firebase-admin/lib/app/credential-factory";
+import Performance from "../models/performance";
 
-export const register = async (req: Request, res: Response) => {
-  const { name, email, password, role, department, phone, managerId, aadhaarNumber, address, employeeId, post } = req.body;
+const upload = multer({ storage: multer.memoryStorage() });
 
-  try {
-    const existingUser = await User.findOne({ email });
-    if (existingUser) {
-      return res.status(400).json({ message: "User exists" });
-    }
+export const register = [
+  upload.single("profilePicture"),   // ← multer middleware (optional field)
+  async (req: Request, res: Response) => {
+    const { 
+      name, email, password, role, department, phone, 
+      managerId, aadhaarNumber, address, employeeId, post 
+    } = req.body;
 
-    const user = new User({
-      name,
-      email,
-      password,
-      role,
-      department,
-      phone,
-      ...(aadhaarNumber && { aadhaarNumber }),
-      ...(address && { address }),
-      ...(employeeId && { employeeId }),
-      ...(post && { post }),
-    });
+    let profilePicture = "";
 
-    await user.save();
+    try {
+      // === Upload profile picture to Cloudinary (if file sent) ===
+      if (req.file) {
+        const result = await new Promise((resolve, reject) => {
+          cloudinary.uploader.upload_stream(
+            { resource_type: "auto" },
+            (error, result) => {
+              if (error) reject(error);
+              else resolve(result);
+            }
+          ).end(req.file!.buffer);
+        });
 
-    // Auto-generate employeeId for employees
-    if (role === "employee") {
-      user.employeeId = `EMP${Date.now()}`;
+        profilePicture = (result as any).secure_url;
+      }
+
+      const existingUser = await User.findOne({ email });
+      if (existingUser) {
+        return res.status(400).json({ message: "User exists" });
+      }
+
+      const user = new User({
+        name,
+        email,
+        password,
+        role,
+        department,
+        phone,
+        profilePicture,                    // ← saved here
+        ...(aadhaarNumber && { aadhaarNumber }),
+        ...(address && { address }),
+        ...(employeeId && { employeeId }),
+        ...(post && { post }),
+        ...(managerId && { managedBy: managerId }),   // ← fixed (was missing)
+      });
+
       await user.save();
+
+      // Auto-generate employeeId for employees
+      if (role === "employee") {
+        user.employeeId = `EMP${Date.now()}`;
+        await user.save();
+      }
+
+      const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET || "", {
+        expiresIn: "30d",
+      });
+
+      res.status(201).json({
+        token,
+        user: {
+          id: user._id,
+          name,
+          email,
+          role,
+          department,
+          phone,
+          profilePicture,                  // ← now returned
+          managerId,
+          aadhaarNumber,
+          address,
+          employeeId,
+          post,
+        },
+      });
+    } catch (error) {
+      console.log("Register error:", error);
+      res.status(500).json({ message: "Server error" });
     }
-
-    const token = jwt.sign({ id: user._id }, process.env.JWT_SECRET || "", {
-      expiresIn: "30d",
-    });
-
-    res.status(201).json({
-      token,
-      user: { id: user._id, name, email, role, department, phone, managerId, aadhaarNumber, address, employeeId, post },
-    });
-  } catch (error) {
-    console.log("error", error)
-    res.status(500).json({ message: "Server error" });
-  }
-};
+  },
+];
 
 export const login = async (req: Request, res: Response) => {
   const { userName, password, fcmToken } = req.body;
-  console.log("req", req.body);
 
   try {
     const user = await User.findOne({
       $or: [{ email: userName }, { employeeId: userName }],
-    }).select('+password');
+    }).select("+password").populate<{ managedBy: { _id: any; name: string } | null }>("managedBy", "name");
 
     if (!user || !(await bcrypt.compare(password, user.password))) {
-      console.log("user not found")
       return res.status(401).json({ message: "Invalid credentials" });
     }
 
-    if (fcmToken && typeof fcmToken === 'string' && fcmToken.length > 10 && fcmToken.length < 200) {
+    if (fcmToken && typeof fcmToken === "string" && fcmToken.length > 10 && fcmToken.length < 200) {
       user.fcmToken = fcmToken;
       await user.save({ validateBeforeSave: false });
     }
@@ -72,43 +112,58 @@ export const login = async (req: Request, res: Response) => {
       expiresIn: "30d",
     });
 
+    const manager = user.managedBy as any;
+
+    // Fetch today's performance score and rank
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+
+    const todayPerf = await Performance.findOne({
+      user: user._id,
+      period: "daily",
+      periodStart: { $gte: todayStart },
+    }).sort({ periodStart: -1 });
+
+    let score: number | null = todayPerf?.score ?? null;
+    let rank: number | null = null;
+
+    if (score !== null) {
+      // Rank = how many employees scored strictly higher + 1
+      const higherCount = await Performance.countDocuments({
+        period: "daily",
+        periodStart: { $gte: todayStart },
+        score: { $gt: score },
+      });
+      rank = higherCount + 1;
+    }
+
     res.status(200).json({
       ok: true,
       message: "User login successful",
       token,
-      user: { id: user._id, name: user.name, email: user.email, role: user.role },
+      user: {
+        id: user._id,
+        name: user.name,
+        email: user.email,
+        role: user.role,
+        profilePicture: user.profilePicture || "",
+        department: user.department,
+        phone: user.phone,
+        aadhaarNumber: user.aadhaarNumber,
+        address: user.address,
+        employeeId: user.employeeId,
+        post: user.post,
+        managedBy: manager ? { id: manager._id, name: manager.name } : null,
+        joiningDate: user.joiningDate,
+        score,
+        rank,
+      },
     });
   } catch (error) {
     console.log(error);
     res.status(500).json({
       success: false,
-      message: 'Something went wrong. Please try again later.',
+      message: "Something went wrong. Please try again later.",
     });
   }
 };
-
-export const getAdminsAndManagers = async (req: Request, res: Response) => {
-  try {
-    const users = await User.find({ 
-      role: { $in: ["admin", "manager"] },
-      isActive: true // Optional: Only active users
-    }).select("name _id").lean(); // Use lean() for better performance since we only need basic fields
-
-    // Transform to include a display label for the frontend select (name + ID for clarity)
-    const transformedUsers = users.map(user => ({
-      id: user._id.toString(),
-      name: user.name
-    }));
-
-    res.status(200).json({
-      success: true,
-      data: transformedUsers
-    });
-  } catch (error) {
-    console.error("Error fetching admins and managers:", error);
-    res.status(500).json({ 
-      success: false,
-      message: "Server error while fetching admins and managers" 
-    });
-  }
-}
