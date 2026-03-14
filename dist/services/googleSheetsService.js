@@ -1,4 +1,27 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || function (mod) {
+    if (mod && mod.__esModule) return mod;
+    var result = {};
+    if (mod != null) for (var k in mod) if (k !== "default" && Object.prototype.hasOwnProperty.call(mod, k)) __createBinding(result, mod, k);
+    __setModuleDefault(result, mod);
+    return result;
+};
 var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
     function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
     return new (P || (P = Promise))(function (resolve, reject) {
@@ -8,18 +31,8 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
         step((generator = generator.apply(thisArg, _arguments || [])).next());
     });
 };
-var _a;
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.updatePunchSheet = void 0;
-// src/services/googleSheetsService.ts
-const google_spreadsheet_1 = require("google-spreadsheet");
-const google_auth_library_1 = require("google-auth-library");
-const serviceAccountAuth = new google_auth_library_1.JWT({
-    email: process.env.GOOGLE_SERVICE_EMAIL || "",
-    key: ((_a = process.env.GOOGLE_PRIVATE_KEY) === null || _a === void 0 ? void 0 : _a.replace(/\\n/g, "\n")) || "",
-    scopes: ["https://www.googleapis.com/auth/spreadsheets"],
-});
-const doc = new google_spreadsheet_1.GoogleSpreadsheet(process.env.GOOGLE_SHEET_ID || "", serviceAccountAuth);
 const ATTENDANCE_HEADERS = [
     "Employee Name",
     "Employee ID",
@@ -49,29 +62,36 @@ const formatTime = (date) => {
     });
 };
 const updatePunchSheet = (punchData) => __awaiter(void 0, void 0, void 0, function* () {
-    var _a, _b, _c;
+    var _a, _b, _c, _d;
+    // Dynamic import → forces ESM version (works from CJS)
+    const { GoogleSpreadsheet } = yield Promise.resolve().then(() => __importStar(require("google-spreadsheet")));
+    const { JWT } = yield Promise.resolve().then(() => __importStar(require("google-auth-library")));
+    const serviceAccountAuth = new JWT({
+        email: process.env.GOOGLE_SERVICE_EMAIL || "",
+        key: ((_a = process.env.GOOGLE_PRIVATE_KEY) === null || _a === void 0 ? void 0 : _a.replace(/\\n/g, "\n")) || "",
+        scopes: ["https://www.googleapis.com/auth/spreadsheets"],
+    });
+    const doc = new GoogleSpreadsheet(process.env.GOOGLE_SHEET_ID || "", serviceAccountAuth);
     yield doc.loadInfo();
     let sheet = doc.sheetsByTitle["Attendance"];
     if (!sheet) {
-        // Create sheet and immediately set headers
         sheet = yield doc.addSheet({
             title: "Attendance",
             headerValues: ATTENDANCE_HEADERS,
         });
     }
     else {
-        // Sheet exists — ensure headers are set (handles the empty first row case)
         try {
             yield sheet.loadHeaderRow();
         }
-        catch (_d) {
-            // Header row is empty — set it now
+        catch (_e) {
             yield sheet.setHeaderRow(ATTENDANCE_HEADERS);
         }
     }
     const date = new Date(punchData.date);
     const time = new Date(punchData.time);
-    const address = ((_a = punchData.location) === null || _a === void 0 ? void 0 : _a.address) || `${(_b = punchData.location) === null || _b === void 0 ? void 0 : _b.lat}, ${(_c = punchData.location) === null || _c === void 0 ? void 0 : _c.lng}`;
+    const address = ((_b = punchData.location) === null || _b === void 0 ? void 0 : _b.address) ||
+        `${(_c = punchData.location) === null || _c === void 0 ? void 0 : _c.lat}, ${(_d = punchData.location) === null || _d === void 0 ? void 0 : _d.lng}`;
     yield sheet.addRow({
         "Employee Name": punchData.employeeName,
         "Employee ID": punchData.employeeId,

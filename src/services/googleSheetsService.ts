@@ -1,14 +1,6 @@
 // src/services/googleSheetsService.ts
-import { GoogleSpreadsheet } from "google-spreadsheet";
-import { JWT } from "google-auth-library";
-
-const serviceAccountAuth = new JWT({
-  email: process.env.GOOGLE_SERVICE_EMAIL || "",
-  key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, "\n") || "",
-  scopes: ["https://www.googleapis.com/auth/spreadsheets"],
-});
-
-const doc = new GoogleSpreadsheet(process.env.GOOGLE_SHEET_ID || "", serviceAccountAuth);
+import type { GoogleSpreadsheet } from "google-spreadsheet";
+import type { JWT } from "google-auth-library";
 
 const ATTENDANCE_HEADERS = [
   "Employee Name",
@@ -42,29 +34,43 @@ const formatTime = (date: Date): string => {
 };
 
 export const updatePunchSheet = async (punchData: any) => {
+  // Dynamic import → forces ESM version (works from CJS)
+  const { GoogleSpreadsheet } = await import("google-spreadsheet");
+  const { JWT } = await import("google-auth-library");
+
+  const serviceAccountAuth = new JWT({
+    email: process.env.GOOGLE_SERVICE_EMAIL || "",
+    key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, "\n") || "",
+    scopes: ["https://www.googleapis.com/auth/spreadsheets"],
+  });
+
+  const doc = new GoogleSpreadsheet(
+    process.env.GOOGLE_SHEET_ID || "",
+    serviceAccountAuth
+  );
+
   await doc.loadInfo();
 
   let sheet = doc.sheetsByTitle["Attendance"];
 
   if (!sheet) {
-    // Create sheet and immediately set headers
     sheet = await doc.addSheet({
       title: "Attendance",
       headerValues: ATTENDANCE_HEADERS,
     });
   } else {
-    // Sheet exists — ensure headers are set (handles the empty first row case)
     try {
       await sheet.loadHeaderRow();
     } catch {
-      // Header row is empty — set it now
       await sheet.setHeaderRow(ATTENDANCE_HEADERS);
     }
   }
 
   const date = new Date(punchData.date);
   const time = new Date(punchData.time);
-  const address = punchData.location?.address || `${punchData.location?.lat}, ${punchData.location?.lng}`;
+  const address =
+    punchData.location?.address ||
+    `${punchData.location?.lat}, ${punchData.location?.lng}`;
 
   await sheet.addRow({
     "Employee Name": punchData.employeeName,
