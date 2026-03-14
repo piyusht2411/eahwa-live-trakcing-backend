@@ -1,0 +1,11 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = require("express");
+const breakController_1 = require("../controllers/breakController");
+const auth_1 = require("../middleware/auth");
+const router = (0, express_1.Router)();
+router.post("/start", auth_1.protect, (0, auth_1.authorize)("employee"), breakController_1.startBreak);
+router.post("/end", auth_1.protect, (0, auth_1.authorize)("employee"), breakController_1.endBreak);
+router.get("/today", auth_1.protect, (0, auth_1.authorize)("employee"), breakController_1.getTodayBreaks);
+router.get("/all", auth_1.protect, (0, auth_1.authorize)("admin", "hr", "manager"), breakController_1.getAllBreaks);
+exports.default = router;

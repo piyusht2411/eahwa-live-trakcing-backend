@@ -1,0 +1,80 @@
+// src/services/googleSheetsService.ts
+import { GoogleSpreadsheet } from "google-spreadsheet";
+import { JWT } from "google-auth-library";
+
+const serviceAccountAuth = new JWT({
+  email: process.env.GOOGLE_SERVICE_EMAIL || "",
+  key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, "\n") || "",
+  scopes: ["https://www.googleapis.com/auth/spreadsheets"],
+});
+
+const doc = new GoogleSpreadsheet(process.env.GOOGLE_SHEET_ID || "", serviceAccountAuth);
+
+const ATTENDANCE_HEADERS = [
+  "Employee Name",
+  "Employee ID",
+  "Department",
+  "Manager",
+  "Date",
+  "Time",
+  "Location",
+  "Selfie URL",
+  "Type",
+];
+
+const formatDate = (date: Date): string => {
+  return date.toLocaleDateString("en-IN", {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+    timeZone: "Asia/Kolkata",
+  });
+};
+
+const formatTime = (date: Date): string => {
+  return date.toLocaleTimeString("en-IN", {
+    hour: "2-digit",
+    minute: "2-digit",
+    second: "2-digit",
+    hour12: true,
+    timeZone: "Asia/Kolkata",
+  });
+};
+
+export const updatePunchSheet = async (punchData: any) => {
+  await doc.loadInfo();
+
+  let sheet = doc.sheetsByTitle["Attendance"];
+
+  if (!sheet) {
+    // Create sheet and immediately set headers
+    sheet = await doc.addSheet({
+      title: "Attendance",
+      headerValues: ATTENDANCE_HEADERS,
+    });
+  } else {
+    // Sheet exists — ensure headers are set (handles the empty first row case)
+    try {
+      await sheet.loadHeaderRow();
+    } catch {
+      // Header row is empty — set it now
+      await sheet.setHeaderRow(ATTENDANCE_HEADERS);
+    }
+  }
+
+  const date = new Date(punchData.date);
+  const time = new Date(punchData.time);
+  const address = punchData.location?.address || `${punchData.location?.lat}, ${punchData.location?.lng}`;
+
+  await sheet.addRow({
+    "Employee Name": punchData.employeeName,
+    "Employee ID": punchData.employeeId,
+    "Department": punchData.department,
+    "Manager": punchData.manager || "N/A",
+    "Date": formatDate(date),
+    "Time": formatTime(time),
+    "Location": address,
+    "Selfie URL": punchData.selfie || "N/A",
+    "Type": punchData.type,
+  });
+};

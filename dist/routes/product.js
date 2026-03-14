@@ -1,0 +1,14 @@
+"use strict";
+Object.defineProperty(exports, "__esModule", { value: true });
+const express_1 = require("express");
+const product_1 = require("../controller/product");
+const authMiddleware_1 = require("../middleware/authMiddleware");
+const router = (0, express_1.Router)();
+router.post('/create-product', authMiddleware_1.authenticateToken, product_1.createProductHandler);
+router.post('/add-stock', authMiddleware_1.authenticateToken, product_1.addStockHandler);
+router.post('/add-sold-stock', authMiddleware_1.authenticateToken, product_1.addSoldStockHandler);
+router.get('/batteries-stock', product_1.getBatteriesStock);
+router.get('/chargers-stock', product_1.getChargersStock);
+router.get('/stock-history/:type', product_1.getStockHistory);
+router.get('/vehicles-stock', product_1.getVehiclesStock);
+exports.default = router;
