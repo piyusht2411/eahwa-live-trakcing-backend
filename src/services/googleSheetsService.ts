@@ -1,6 +1,6 @@
 // src/services/googleSheetsService.ts
-import type { GoogleSpreadsheet } from "google-spreadsheet";
-import type { JWT } from "google-auth-library";
+import { GoogleSpreadsheet } from "google-spreadsheet";
+import { JWT } from "google-auth-library";
 
 const ATTENDANCE_HEADERS = [
   "Employee Name",
@@ -34,9 +34,6 @@ const formatTime = (date: Date): string => {
 };
 
 export const updatePunchSheet = async (punchData: any) => {
-  // Dynamic import → forces ESM version (works from CJS)
-  const { GoogleSpreadsheet } = await import("google-spreadsheet");
-  const { JWT } = await import("google-auth-library");
 
   const serviceAccountAuth = new JWT({
     email: process.env.GOOGLE_SERVICE_EMAIL || "",
