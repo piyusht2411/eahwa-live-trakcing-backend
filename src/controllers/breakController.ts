@@ -1,9 +1,19 @@
 import { Response } from "express";
 import { AuthRequest } from "../types/authRequest";
 import Break from "../models/break";
+import { isUserPunchedIn } from "../utils/punchCheck";
 
 export const startBreak = async (req: AuthRequest, res: Response) => {
     const userId = req.user?._id;
+
+    // Check if user is punched in
+    const punchedIn = await isUserPunchedIn(userId);
+    if (!punchedIn) {
+      return res.status(403).json({ 
+        success: false, 
+        message: "You must be punched in to start a break" 
+      });
+    }
 
     try {
         // Check if a break is already active

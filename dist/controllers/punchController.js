@@ -18,6 +18,7 @@ const cloudinary_1 = __importDefault(require("../config/cloudinary"));
 const punch_1 = __importDefault(require("../models/punch"));
 const user_1 = __importDefault(require("../models/user"));
 const googleSheetsService_1 = require("../services/googleSheetsService");
+const closeStaleSession_1 = require("../utils/closeStaleSession");
 const upload = (0, multer_1.default)({ storage: multer_1.default.memoryStorage() });
 exports.punch = [
     upload.single("selfie"),
@@ -26,6 +27,9 @@ exports.punch = [
         const { type, date, location } = req.body;
         const authReq = req;
         const userId = (_a = authReq.user) === null || _a === void 0 ? void 0 : _a._id;
+        if (type === "in") {
+            yield (0, closeStaleSession_1.closeStaleSession)(userId);
+        }
         try {
             // Upload selfie
             const selfieResult = yield new Promise((resolve, reject) => {
@@ -77,26 +81,25 @@ const getTodayStatus = (req, res) => __awaiter(void 0, void 0, void 0, function*
     try {
         const today = new Date();
         today.setHours(0, 0, 0, 0);
+        const tomorrow = new Date(today);
+        tomorrow.setDate(tomorrow.getDate() + 1);
         const punches = yield punch_1.default.find({
             user: userId,
-            date: { $gte: today },
+            date: { $gte: today, $lt: tomorrow },
         }).sort({ time: 1 });
         let isPunchedIn = false;
         let punchInTime = null;
         let punchOutTime = null;
         let isAutomaticOut = false;
         if (punches.length > 0) {
-            // Find the first punch "in" for the day
             const firstIn = punches.find((p) => p.type === "in");
             if (firstIn)
                 punchInTime = firstIn.time;
-            // Find the last punch "out"
             const lastOut = [...punches].reverse().find((p) => p.type === "out");
             if (lastOut) {
                 punchOutTime = lastOut.time;
                 isAutomaticOut = lastOut.isAutomatic || false;
             }
-            // current status depends on the last punch type
             const lastPunch = punches[punches.length - 1];
             isPunchedIn = lastPunch.type === "in";
         }

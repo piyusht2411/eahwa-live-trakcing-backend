@@ -4,6 +4,7 @@ import multer from "multer";
 import cloudinary from "../config/cloudinary";
 import Task from "../models/task";
 import User from "../models/user";
+import { isUserPunchedIn } from "../utils/punchCheck";
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -13,6 +14,14 @@ export const submitTask = [
     const { date, showroomName, phone, address, stock, feedback, nextOrderPlan } = req.body;
     console.log(req.body);
     const userId = req.user._id;
+
+      const punchedIn = await isUserPunchedIn(userId);
+      if (!punchedIn) {
+        return res.status(403).json({ 
+          success: false, 
+          message: "You must be punched in to submit a task" 
+        });
+      }
 
     try {
       const photos: string[] = [];
@@ -107,6 +116,16 @@ export const updateTask = [
       // Only the owner or admin/hr can update
       if (req.user.role === "employee" && task.user.toString() !== req.user._id.toString()) {
         return res.status(403).json({ message: "Forbidden" });
+      }
+
+      if (req.user.role === "employee" || req.user.role === "manager") {
+        const punchedIn = await isUserPunchedIn(req.user._id);
+        if (!punchedIn) {
+          return res.status(403).json({ 
+            success: false, 
+            message: "You must be punched in to edit a task" 
+          });
+        }
       }
 
       const { date, showroomName, phone, address, stock, feedback, nextOrderPlan } = req.body;

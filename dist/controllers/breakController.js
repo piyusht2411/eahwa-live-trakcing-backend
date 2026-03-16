@@ -14,9 +14,18 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getTodayBreaks = exports.getAllBreaks = exports.endBreak = exports.startBreak = void 0;
 const break_1 = __importDefault(require("../models/break"));
+const punchCheck_1 = require("../utils/punchCheck");
 const startBreak = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     var _a;
     const userId = (_a = req.user) === null || _a === void 0 ? void 0 : _a._id;
+    // Check if user is punched in
+    const punchedIn = yield (0, punchCheck_1.isUserPunchedIn)(userId);
+    if (!punchedIn) {
+        return res.status(403).json({
+            success: false,
+            message: "You must be punched in to start a break"
+        });
+    }
     try {
         // Check if a break is already active
         const activeBreak = yield break_1.default.findOne({ user: userId, endTime: { $exists: false } });

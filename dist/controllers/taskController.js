@@ -17,6 +17,7 @@ const multer_1 = __importDefault(require("multer"));
 const cloudinary_1 = __importDefault(require("../config/cloudinary"));
 const task_1 = __importDefault(require("../models/task"));
 const user_1 = __importDefault(require("../models/user"));
+const punchCheck_1 = require("../utils/punchCheck");
 const upload = (0, multer_1.default)({ storage: multer_1.default.memoryStorage() });
 exports.submitTask = [
     upload.array("photos", 10),
@@ -24,6 +25,13 @@ exports.submitTask = [
         const { date, showroomName, phone, address, stock, feedback, nextOrderPlan } = req.body;
         console.log(req.body);
         const userId = req.user._id;
+        const punchedIn = yield (0, punchCheck_1.isUserPunchedIn)(userId);
+        if (!punchedIn) {
+            return res.status(403).json({
+                success: false,
+                message: "You must be punched in to submit a task"
+            });
+        }
         try {
             const photos = [];
             for (const file of req.files) {
@@ -111,6 +119,15 @@ exports.updateTask = [
             // Only the owner or admin/hr can update
             if (req.user.role === "employee" && task.user.toString() !== req.user._id.toString()) {
                 return res.status(403).json({ message: "Forbidden" });
+            }
+            if (req.user.role === "employee" || req.user.role === "manager") {
+                const punchedIn = yield (0, punchCheck_1.isUserPunchedIn)(req.user._id);
+                if (!punchedIn) {
+                    return res.status(403).json({
+                        success: false,
+                        message: "You must be punched in to edit a task"
+                    });
+                }
             }
             const { date, showroomName, phone, address, stock, feedback, nextOrderPlan } = req.body;
             if (date)

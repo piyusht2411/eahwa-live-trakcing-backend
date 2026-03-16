@@ -6,6 +6,7 @@ import Punch from "../models/punch";
 import User from "../models/user";
 import { updatePunchSheet } from "../services/googleSheetsService";
 import { AuthRequest } from "../types/authRequest";
+import { closeStaleSession } from "../utils/closeStaleSession";
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -15,6 +16,10 @@ export const punch = [
     const { type, date, location } = req.body;
     const authReq = req as AuthRequest;
     const userId = authReq.user?._id;
+
+     if (type === "in") {
+        await closeStaleSession(userId);
+      }
 
     try {
       // Upload selfie
@@ -73,10 +78,12 @@ export const getTodayStatus = async (req: AuthRequest, res: Response) => {
   try {
     const today = new Date();
     today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
 
     const punches = await Punch.find({
       user: userId,
-      date: { $gte: today },
+      date: { $gte: today, $lt: tomorrow },
     }).sort({ time: 1 });
 
     let isPunchedIn = false;
@@ -85,18 +92,15 @@ export const getTodayStatus = async (req: AuthRequest, res: Response) => {
     let isAutomaticOut = false;
 
     if (punches.length > 0) {
-      // Find the first punch "in" for the day
       const firstIn = punches.find((p) => p.type === "in");
       if (firstIn) punchInTime = firstIn.time;
 
-      // Find the last punch "out"
       const lastOut = [...punches].reverse().find((p) => p.type === "out");
       if (lastOut) {
         punchOutTime = lastOut.time;
         isAutomaticOut = lastOut.isAutomatic || false;
       }
 
-      // current status depends on the last punch type
       const lastPunch = punches[punches.length - 1];
       isPunchedIn = lastPunch.type === "in";
     }
