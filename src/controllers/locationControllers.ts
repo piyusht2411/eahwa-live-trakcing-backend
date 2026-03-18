@@ -4,18 +4,14 @@ import LocationLog from "../models/locationlogs";
 import User from "../models/user";
 import Alert from "../models/alert";
 import { detectAnomalies } from "../services/anomalyService";
-import { sendWhatsAppAlert } from "../services/notificationService";
 import { Types } from "mongoose";
+
+import { sendOfflineAlert, sendDeviceAlert } from "../services/notificationService";
 
 export const logLocation = async (req: Request, res: Response) => {
   const {
-    location,
-    speed,
-    battery,
-    isOffline,
-    gpsDisabled,
-    internetDisabled,
-    deviceOff,
+    location, speed, battery,
+    isOffline, gpsDisabled, internetDisabled, deviceOff,
   } = req.body;
   const userId = (req as any).user._id;
 
@@ -32,14 +28,10 @@ export const logLocation = async (req: Request, res: Response) => {
     });
 
     await log.save();
-
-    // Update user's tracking timestamp for heartbeat cron
     await User.findByIdAndUpdate(userId, { lastLocationAt: new Date() });
-
-    // Detect anomalies on each location log
     await detectAnomalies(userId, log);
 
-    // Offline tracking: log long offline durations and alert HR
+    // ── Offline duration alert ──────────────────────────────────────────────
     if (isOffline) {
       const lastOnlineLog = await LocationLog.findOne({
         user: userId,
@@ -53,11 +45,9 @@ export const logLocation = async (req: Request, res: Response) => {
           Date.now() - new Date(lastOnlineLog.timestamp).getTime();
         const offlineDurationHours = offlineDurationMs / (1000 * 60 * 60);
 
-        // Alert if offline for >= 1 hour
         if (offlineDurationHours >= 1) {
-          const description = `User offline for ${offlineDurationHours.toFixed(
-            2
-          )} hours`;
+          const durationStr = offlineDurationHours.toFixed(2);
+          const description = `User offline for ${durationStr} hours`;
 
           await Alert.create({
             user: userId,
@@ -66,49 +56,40 @@ export const logLocation = async (req: Request, res: Response) => {
           });
 
           if (process.env.HR_WHATSAPP_TO) {
-            await sendWhatsAppAlert(
-              process.env.HR_WHATSAPP_TO,
-              `Offline alert: ${description}`
+            // Fetch name for a friendlier template variable
+            const user = await User.findById(userId).lean();
+            await sendOfflineAlert(
+              String(userId),
+              user?.name ?? String(userId), // {{1}}
+              durationStr                   // {{2}}
             );
           }
         }
       }
     }
 
-    // Device / GPS / Internet alerts pushed from mobile app
+    // ── Device / GPS / Internet alerts ─────────────────────────────────────
     const alertPromises: Promise<unknown>[] = [];
     const alertDescriptions: string[] = [];
 
     if (gpsDisabled) {
       alertDescriptions.push("GPS disabled on device");
       alertPromises.push(
-        Alert.create({
-          user: userId,
-          type: "gps_disabled",
-          description: "GPS disabled on device",
-        })
+        Alert.create({ user: userId, type: "gps_disabled", description: "GPS disabled on device" })
       );
     }
 
     if (internetDisabled) {
       alertDescriptions.push("Internet disabled on device");
       alertPromises.push(
-        Alert.create({
-          user: userId,
-          type: "internet_disabled",
-          description: "Internet disabled on device",
-        })
+        Alert.create({ user: userId, type: "internet_disabled", description: "Internet disabled on device" })
       );
     }
 
     if (deviceOff) {
       alertDescriptions.push("Device switched off");
       alertPromises.push(
-        Alert.create({
-          user: userId,
-          type: "device_off",
-          description: "Device switched off",
-        })
+        Alert.create({ user: userId, type: "device_off", description: "Device switched off" })
       );
     }
 
@@ -116,9 +97,11 @@ export const logLocation = async (req: Request, res: Response) => {
       await Promise.all(alertPromises);
 
       if (process.env.HR_WHATSAPP_TO) {
-        await sendWhatsAppAlert(
-          process.env.HR_WHATSAPP_TO,
-          `Alert(s) for user ${userId}: ${alertDescriptions.join(", ")}`
+        const user = await User.findById(userId).lean();
+        await sendDeviceAlert(
+          String(userId),
+          user?.name ?? String(userId), // {{1}}
+          alertDescriptions             // {{2}}
         );
       }
     }

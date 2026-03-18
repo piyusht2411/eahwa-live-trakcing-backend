@@ -164,6 +164,8 @@ export interface IAlert extends Document {
   description: string;
   timestamp: Date;
   resolved: boolean;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export interface IWorkingHours extends Document {

@@ -16,23 +16,68 @@ exports.getAlerts = void 0;
 const alert_1 = __importDefault(require("../models/alert"));
 const getAlerts = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
-        const alerts = yield alert_1.default.find()
-            .populate("user", "name")
-            .sort({ timestamp: -1 })
-            .limit(50)
-            .lean();
-        const data = alerts.map(a => {
-            var _a;
-            return ({
+        const { type, status, userId, from, to, limit = "50", page = "1", } = req.query;
+        const filter = {};
+        // Filter by alert type
+        if (type)
+            filter.type = type;
+        // Filter by resolved status  ?status=resolved | open
+        if (status === "resolved")
+            filter.resolved = true;
+        else if (status === "open")
+            filter.resolved = false;
+        // Filter by specific user  ?userId=abc123
+        if (userId)
+            filter.user = userId;
+        // Filter by date range  ?from=2024-01-01&to=2024-01-31
+        if (from || to) {
+            filter.timestamp = {};
+            if (from)
+                filter.timestamp.$gte = new Date(from);
+            if (to)
+                filter.timestamp.$lte = new Date(to);
+        }
+        const pageNum = Math.max(1, parseInt(limit));
+        const limitNum = Math.max(1, parseInt(limit));
+        const skip = (pageNum - 1) * limitNum;
+        const [alerts, total] = yield Promise.all([
+            alert_1.default.find(filter)
+                .populate("user", "name email phone")
+                .sort({ timestamp: -1 })
+                .skip(skip)
+                .limit(limitNum)
+                .lean(),
+            alert_1.default.countDocuments(filter),
+        ]);
+        const data = alerts.map((a) => {
+            // Parse offline duration from description e.g. "User offline for 1.25 hours"
+            let duration = null;
+            if (a.type === "offline_long" && a.description) {
+                const match = a.description.match(/([\d.]+)\s*hours?/i);
+                if (match)
+                    duration = parseFloat(match[1]);
+            }
+            const user = a.user;
+            return {
                 _id: a._id,
-                employeeName: ((_a = a.user) === null || _a === void 0 ? void 0 : _a.name) || "Unknown",
+                employeeName: (user === null || user === void 0 ? void 0 : user.name) || "Unknown",
+                employeeEmail: (user === null || user === void 0 ? void 0 : user.email) || null,
+                employeePhone: (user === null || user === void 0 ? void 0 : user.phone) || null,
                 type: a.type,
+                description: a.description, // full human-readable detail
+                duration, // hours offline, null for non-offline alerts
                 timestamp: a.timestamp,
-                duration: 0,
                 status: a.resolved ? "resolved" : "open",
-            });
+                createdAt: a.createdAt,
+            };
         });
-        res.status(200).json({ success: true, data });
+        res.status(200).json({
+            success: true,
+            total,
+            page: pageNum,
+            pages: Math.ceil(total / limitNum),
+            data,
+        });
     }
     catch (error) {
         console.error("Get alerts error:", error);

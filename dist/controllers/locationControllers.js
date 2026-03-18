@@ -17,9 +17,10 @@ const locationlogs_1 = __importDefault(require("../models/locationlogs"));
 const user_1 = __importDefault(require("../models/user"));
 const alert_1 = __importDefault(require("../models/alert"));
 const anomalyService_1 = require("../services/anomalyService");
-const notificationService_1 = require("../services/notificationService");
 const mongoose_1 = require("mongoose");
+const notificationService_1 = require("../services/notificationService");
 const logLocation = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    var _a, _b;
     const { location, speed, battery, isOffline, gpsDisabled, internetDisabled, deviceOff, } = req.body;
     const userId = req.user._id;
     try {
@@ -32,11 +33,9 @@ const logLocation = (req, res) => __awaiter(void 0, void 0, void 0, function* ()
             isOffline,
         });
         yield log.save();
-        // Update user's tracking timestamp for heartbeat cron
         yield user_1.default.findByIdAndUpdate(userId, { lastLocationAt: new Date() });
-        // Detect anomalies on each location log
         yield (0, anomalyService_1.detectAnomalies)(userId, log);
-        // Offline tracking: log long offline durations and alert HR
+        // ── Offline duration alert ──────────────────────────────────────────────
         if (isOffline) {
             const lastOnlineLog = yield locationlogs_1.default.findOne({
                 user: userId,
@@ -47,51 +46,46 @@ const logLocation = (req, res) => __awaiter(void 0, void 0, void 0, function* ()
             if (lastOnlineLog) {
                 const offlineDurationMs = Date.now() - new Date(lastOnlineLog.timestamp).getTime();
                 const offlineDurationHours = offlineDurationMs / (1000 * 60 * 60);
-                // Alert if offline for >= 1 hour
                 if (offlineDurationHours >= 1) {
-                    const description = `User offline for ${offlineDurationHours.toFixed(2)} hours`;
+                    const durationStr = offlineDurationHours.toFixed(2);
+                    const description = `User offline for ${durationStr} hours`;
                     yield alert_1.default.create({
                         user: userId,
                         type: "offline_long",
                         description,
                     });
                     if (process.env.HR_WHATSAPP_TO) {
-                        yield (0, notificationService_1.sendWhatsAppAlert)(process.env.HR_WHATSAPP_TO, `Offline alert: ${description}`);
+                        // Fetch name for a friendlier template variable
+                        const user = yield user_1.default.findById(userId).lean();
+                        yield (0, notificationService_1.sendOfflineAlert)(String(userId), (_a = user === null || user === void 0 ? void 0 : user.name) !== null && _a !== void 0 ? _a : String(userId), // {{1}}
+                        durationStr // {{2}}
+                        );
                     }
                 }
             }
         }
-        // Device / GPS / Internet alerts pushed from mobile app
+        // ── Device / GPS / Internet alerts ─────────────────────────────────────
         const alertPromises = [];
         const alertDescriptions = [];
         if (gpsDisabled) {
             alertDescriptions.push("GPS disabled on device");
-            alertPromises.push(alert_1.default.create({
-                user: userId,
-                type: "gps_disabled",
-                description: "GPS disabled on device",
-            }));
+            alertPromises.push(alert_1.default.create({ user: userId, type: "gps_disabled", description: "GPS disabled on device" }));
         }
         if (internetDisabled) {
             alertDescriptions.push("Internet disabled on device");
-            alertPromises.push(alert_1.default.create({
-                user: userId,
-                type: "internet_disabled",
-                description: "Internet disabled on device",
-            }));
+            alertPromises.push(alert_1.default.create({ user: userId, type: "internet_disabled", description: "Internet disabled on device" }));
         }
         if (deviceOff) {
             alertDescriptions.push("Device switched off");
-            alertPromises.push(alert_1.default.create({
-                user: userId,
-                type: "device_off",
-                description: "Device switched off",
-            }));
+            alertPromises.push(alert_1.default.create({ user: userId, type: "device_off", description: "Device switched off" }));
         }
         if (alertPromises.length > 0) {
             yield Promise.all(alertPromises);
             if (process.env.HR_WHATSAPP_TO) {
-                yield (0, notificationService_1.sendWhatsAppAlert)(process.env.HR_WHATSAPP_TO, `Alert(s) for user ${userId}: ${alertDescriptions.join(", ")}`);
+                const user = yield user_1.default.findById(userId).lean();
+                yield (0, notificationService_1.sendDeviceAlert)(String(userId), (_b = user === null || user === void 0 ? void 0 : user.name) !== null && _b !== void 0 ? _b : String(userId), // {{1}}
+                alertDescriptions // {{2}}
+                );
             }
         }
         res.json({ message: "Location logged" });

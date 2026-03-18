@@ -12,18 +12,13 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.sendWhatsAppAlert = exports.sendFCMNotification = void 0;
+exports.sendLocationStoppedAlert = exports.sendAnomalyAlert = exports.sendDeviceAlert = exports.sendOfflineAlert = exports.sendFCMNotification = void 0;
 // src/services/notificationService.ts
 const firebase_admin_1 = __importDefault(require("firebase-admin"));
-// if (!admin.apps.length) {
-//   admin.initializeApp({
-//     credential: admin.credential.cert({
-//       projectId: process.env.FIREBASE_PROJECT_ID,
-//       privateKey: process.env.FIREBASE_PRIVATE_KEY?.replace(/\\n/g, "\n"),
-//       clientEmail: process.env.FIREBASE_CLIENT_EMAIL,
-//     }),
-//   });
-// }
+const twilio_1 = __importDefault(require("twilio"));
+const client = (0, twilio_1.default)(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+const TWILIO_WHATSAPP_FROM = `whatsapp:${process.env.TWILIO_WHATSAPP_FROM}`;
+const HR_WHATSAPP_TO = `whatsapp:${process.env.HR_WHATSAPP_TO}`;
 const sendFCMNotification = (token, title, body) => __awaiter(void 0, void 0, void 0, function* () {
     yield firebase_admin_1.default.messaging().send({
         token,
@@ -31,29 +26,69 @@ const sendFCMNotification = (token, title, body) => __awaiter(void 0, void 0, vo
     });
 });
 exports.sendFCMNotification = sendFCMNotification;
-// For WhatsApp, assume Twilio integration
-const twilio_1 = __importDefault(require("twilio"));
-const client = (0, twilio_1.default)(process.env.TWILIO_SID, process.env.TWILIO_TOKEN);
-const sendWhatsAppAlert = (to, message) => __awaiter(void 0, void 0, void 0, function* () {
+// ── Offline too long ──────────────────────────────────────────────────────────
+// Template variables:
+//   {{1}} employee name / userId
+//   {{2}} offline duration (e.g. "1.25 hours")
+const sendOfflineAlert = (userId, employeeName, durationHours) => __awaiter(void 0, void 0, void 0, function* () {
     yield client.messages.create({
-        from: "whatsapp:" + process.env.TWILIO_WHATSAPP_FROM,
-        to: "whatsapp:" + to,
-        body: message,
+        from: TWILIO_WHATSAPP_FROM,
+        to: HR_WHATSAPP_TO,
+        contentSid: process.env.TWILIO_TEMPLATE_OFFLINE_SID, // e.g. "HXabc123..."
+        contentVariables: JSON.stringify({
+            "1": employeeName || userId,
+            "2": durationHours,
+        }),
     });
 });
-exports.sendWhatsAppAlert = sendWhatsAppAlert;
-// export const sendWhatsAppTemplate = async (
-//   to: string,
-//   templateName: string,
-//   variables: Record<string, string>
-// ) => {
-//   await client.messages.create({
-//     from: `whatsapp:${process.env.TWILIO_WHATSAPP_FROM}`,
-//     to: `whatsapp:${to}`,
-//     template: {
-//       name: templateName,
-//       language: "en",
-//       components: [{ type: "body", parameters: Object.values(variables).map(v => ({ type: "text", text: v })) }]
-//     },
-//   });
-// };
+exports.sendOfflineAlert = sendOfflineAlert;
+// ── Device / GPS / Internet alerts ───────────────────────────────────────────
+// Template variables:
+//   {{1}} employee name / userId
+//   {{2}} comma-separated list of active alerts
+const sendDeviceAlert = (userId, employeeName, alertDescriptions) => __awaiter(void 0, void 0, void 0, function* () {
+    yield client.messages.create({
+        from: TWILIO_WHATSAPP_FROM,
+        to: HR_WHATSAPP_TO,
+        contentSid: process.env.TWILIO_TEMPLATE_DEVICE_SID, // e.g. "HXdef456..."
+        contentVariables: JSON.stringify({
+            "1": employeeName || userId,
+            "2": alertDescriptions.join(", "),
+        }),
+    });
+});
+exports.sendDeviceAlert = sendDeviceAlert;
+// ── Anomaly alert ─────────────────────────────────────────────────────────────
+// Template variables:
+//   {{1}} employee name / userId
+//   {{2}} anomaly type  (e.g. "unrealistic_speed")
+//   {{3}} detail        (e.g. "Speed: 240 km/h")
+const sendAnomalyAlert = (userId, employeeName, anomalyType, detail) => __awaiter(void 0, void 0, void 0, function* () {
+    yield client.messages.create({
+        from: TWILIO_WHATSAPP_FROM,
+        to: HR_WHATSAPP_TO,
+        contentSid: process.env.TWILIO_TEMPLATE_ANOMALY_SID,
+        contentVariables: JSON.stringify({
+            "1": employeeName || userId,
+            "2": anomalyType,
+            "3": detail,
+        }),
+    });
+});
+exports.sendAnomalyAlert = sendAnomalyAlert;
+// ── Location stopped alert ────────────────────────────────────────────────────
+// Template variables:
+//   {{1}} employee name
+//   {{2}} threshold in minutes (e.g. "20")
+const sendLocationStoppedAlert = (userId, employeeName, thresholdMinutes) => __awaiter(void 0, void 0, void 0, function* () {
+    yield client.messages.create({
+        from: TWILIO_WHATSAPP_FROM,
+        to: HR_WHATSAPP_TO,
+        contentSid: process.env.TWILIO_TEMPLATE_LOCATION_STOPPED_SID,
+        contentVariables: JSON.stringify({
+            "1": employeeName || userId,
+            "2": thresholdMinutes.toString(),
+        }),
+    });
+});
+exports.sendLocationStoppedAlert = sendLocationStoppedAlert;

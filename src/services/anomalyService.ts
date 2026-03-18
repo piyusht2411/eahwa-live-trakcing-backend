@@ -2,40 +2,99 @@
 import LocationLog from "../models/locationlogs";
 import Punch from "../models/punch";
 import Anomaly from "../models/anomaly";
-import { sendWhatsAppAlert } from "./notificationService";
+import User from "../models/user";
+import { sendAnomalyAlert } from "./notificationService";
 
+// ── Helper: resolve employee name once per detectAnomalies call ───────────────
+const resolveEmployeeName = async (userId: string): Promise<string> => {
+  const user = await User.findById(userId).lean();
+  return (user as any)?.name ?? userId;
+};
+
+// ── Helper: save anomaly + optionally fire WhatsApp alert ─────────────────────
+const logAnomaly = async (
+  userId: string,
+  employeeName: string,
+  type: string,
+  description: string,
+  notify = false
+) => {
+  await Anomaly.create({ user: userId, type, description });
+
+  if (notify && process.env.HR_WHATSAPP_TO) {
+    await sendAnomalyAlert(userId, employeeName, type, description);
+  }
+};
+
+// ── Speed helper ──────────────────────────────────────────────────────────────
+const calculateSpeed = (log1: any, log2: any): number => {
+  const R = 6371; // Earth radius km
+  const dLat = ((log1.location.lat - log2.location.lat) * Math.PI) / 180;
+  const dLon = ((log1.location.lng - log2.location.lng) * Math.PI) / 180;
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos((log2.location.lat * Math.PI) / 180) *
+      Math.cos((log1.location.lat * Math.PI) / 180) *
+      Math.sin(dLon / 2) ** 2;
+  const distanceKm = 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+  const deltaHours =
+    Math.abs(
+      new Date(log1.timestamp).getTime() - new Date(log2.timestamp).getTime()
+    ) /
+    (1000 * 60 * 60);
+
+  return deltaHours > 0 ? distanceKm / deltaHours : 0;
+};
+
+// ── Main ──────────────────────────────────────────────────────────────────────
 export const detectAnomalies = async (userId: string, log: any) => {
-  const recentLogs = await LocationLog.find({ user: userId }).sort({ timestamp: -1 }).limit(10);
-  const recentPunches = await Punch.find({ user: userId }).sort({ time: -1 }).limit(5);
+  const [recentLogs, recentPunches, employeeName] = await Promise.all([
+    LocationLog.find({ user: userId }).sort({ timestamp: -1 }).limit(10),
+    Punch.find({ user: userId }).sort({ time: -1 }).limit(5),
+    resolveEmployeeName(userId),
+  ]);
 
-  // Repeated punch
-  if (recentPunches.length > 1 && recentPunches[0].location.lat === recentPunches[1].location.lat && recentPunches[0].type === "in") {
-    await logAnomaly(userId, "repeated_punch", "Same location punch detected");
+  // ── Repeated punch at same location ────────────────────────────────────────
+  if (
+    recentPunches.length > 1 &&
+    recentPunches[0].type === "in" &&
+    recentPunches[0].location.lat === recentPunches[1].location.lat &&
+    recentPunches[0].location.lng === recentPunches[1].location.lng
+  ) {
+    await logAnomaly(
+      userId,
+      employeeName,
+      "repeated_punch",
+      "Punch-in detected from the same location twice",
+      true  // notify HR
+    );
   }
 
-  // Unrealistic speed
+  // ── Unrealistic speed ───────────────────────────────────────────────────────
   if (recentLogs.length > 1) {
     const speed = calculateSpeed(recentLogs[0], recentLogs[1]);
-    if (speed > 200) { // km/h
-      await logAnomaly(userId, "unrealistic_speed", `Speed: ${speed} km/h`);
+    if (speed > 200) {
+      await logAnomaly(
+        userId,
+        employeeName,
+        "unrealistic_speed",
+        `Speed of ${speed.toFixed(1)} km/h detected between last two locations`,
+        true  // notify HR
+      );
     }
   }
 
-  // Excessive idle
-  if (recentLogs.length > 1 && (Date.now() - recentLogs[0].timestamp.getTime()) > 3600000) { // 1hr
-    await logAnomaly(userId, "excessive_idle", "No movement for 1 hour");
-    await sendWhatsAppAlert("hr_phone", "Idle alert for employee");
+  // ── Excessive idle (no new log for 1 hour) ──────────────────────────────────
+  if (
+    recentLogs.length > 0 &&
+    Date.now() - new Date(recentLogs[0].timestamp).getTime() > 3_600_000
+  ) {
+    await logAnomaly(
+      userId,
+      employeeName,
+      "excessive_idle",
+      "No movement or location update detected for over 1 hour",
+      true  // notify HR
+    );
   }
-
-  // Short visit (from tasks, assume integrated)
-};
-
-const logAnomaly = async (userId: string, type: string, desc: string) => {
-  const anomaly = new Anomaly({ user: userId, type, description: desc });
-  await anomaly.save();
-};
-
-const calculateSpeed = (log1: any, log2: any) => {
-  // Implement
-  return 0;
 };

@@ -2,109 +2,79 @@ import User from "../models/user";
 import Punch from "../models/punch";
 import Break from "../models/break";
 import Alert from "../models/alert";
-import { updatePunchSheet } from "./googleSheetsService";
-import { sendFCMNotification, sendWhatsAppAlert } from "./notificationService";
+import { sendFCMNotification, sendLocationStoppedAlert } from "./notificationService";
 
 export const checkHeartbeats = async () => {
   try {
     const THRESHOLD_MINUTES = 20;
     const cutoffTime = new Date(Date.now() - THRESHOLD_MINUTES * 60 * 1000);
 
-    // Find users whose last location update was before the cutoff time
     const staleUsers = await User.find({
       lastLocationAt: { $lt: cutoffTime, $ne: null },
-      role: { $in: ["employee", "manager"] } // Only check employees and managers
-    }).populate("managedBy");
+      role: { $in: ["employee", "manager"] },
+    });
 
-    let autoPunchedOutCount = 0;
+    let alertedCount = 0;
 
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
     for (const user of staleUsers) {
-      // 1. Check if user is currently punched in today
-      const lastPunch = await Punch.findOne({ user: user._id, date: { $gte: today } }).sort({ time: -1 });
-
-      if (!lastPunch || lastPunch.type !== "in") {
-        console.log("User is not punched in or already punched out", user.name);
-        continue; // Not punched in or already punched out
-      }
-
-      // 2. Check if user is currently on an active break
-      const activeBreak = await Break.findOne({ user: user._id, endTime: { $exists: false } });
-      if (activeBreak) {
-        console.log("User is on an active break", user.name);
-        continue; // User is on a valid break, ignore silence
-      }
-
-      // 3. User is punched in, not on break, and hasn't sent location for 20 mins. AUTO PUNCH OUT.
-      const now = new Date();
-      const autoPunch = new Punch({
+      // 1. Must be currently punched in today
+      const lastPunch = await Punch.findOne({
         user: user._id,
-        type: "out",
-        date: now,
-        time: now,
-        // Use last known location from the in-punch since we don't have current
-        location: lastPunch.location,
-        isAutomatic: true,
-        reason: "Location sharing stopped",
-        selfie: null, // No selfie for auto punch-out
+        date: { $gte: today },
+      }).sort({ time: -1 });
+
+      if (!lastPunch || lastPunch.type !== "in") continue;
+
+      // 2. Skip if on an active break
+      const activeBreak = await Break.findOne({
+        user: user._id,
+        endTime: { $exists: false },
       });
+      if (activeBreak) continue;
 
-      await autoPunch.save();
-
-      // 4. Create Alert
+      // 3. Create alert
       await Alert.create({
         user: user._id,
         type: "location_stopped",
         description: `User stopped sharing location for over ${THRESHOLD_MINUTES} minutes`,
       });
 
-      // 5. Update Google Sheet
-      try {
-        const manager: any = user.managedBy;
-        await updatePunchSheet({
-          employeeName: user.name,
-          employeeId: user.employeeId,
-          department: user.department,
-          manager: manager?.name || "N/A",
-          date: autoPunch.date,
-          time: autoPunch.time,
-          location: autoPunch.location,
-          selfie: null, // handled as "N/A" in googleSheetsService update
-          type: "Auto Punch-Out (Location Stopped)",
-        });
-      } catch (sheetError) {
-        console.error("Failed to update Google Sheet for auto punch-out:", sheetError);
-      }
+      alertedCount++;
 
-      // 6. Notify Admins
-      autoPunchedOutCount++;
+      // 4. FCM → all admins
       const admins = await User.find({ role: "admin", fcmToken: { $ne: null } });
-      const fcmTokens = admins.map(a => a.fcmToken as string).filter(Boolean);
 
-      const title = "⚠️ Location Sharing Stopped";
-      const body = `${user.name} stopped sending location and was auto punched out.`;
-
-      for (const token of fcmTokens) {
+      for (const admin of admins) {
+        if (!admin.fcmToken) continue;
         try {
-          await sendFCMNotification(token, title, body);
+          await sendFCMNotification(
+            admin.fcmToken,
+            "⚠️ Location Sharing Stopped",
+            `${user.name} stopped sending location for over ${THRESHOLD_MINUTES} minutes.`
+          );
         } catch (fcmError) {
-          console.error("Failed to send FCM for auto punch-out:", fcmError);
+          console.error(`FCM failed for admin ${admin._id}:`, fcmError);
         }
       }
 
-      // WhatsApp to HR if configured
+      // 5. WhatsApp → HR via template
       if (process.env.HR_WHATSAPP_TO) {
         try {
-          await sendWhatsAppAlert(process.env.HR_WHATSAPP_TO, `*Alert*: ${body}`);
+          await sendLocationStoppedAlert(
+            String(user._id),
+            user.name,         // {{1}}
+            THRESHOLD_MINUTES  // {{2}}
+          );
         } catch (waError) {
-          console.error("Failed to send WA alert:", waError);
+          console.error(`WhatsApp alert failed for user ${user._id}:`, waError);
         }
       }
     }
 
-    return { success: true, processed: autoPunchedOutCount };
+    return { success: true, alerted: alertedCount };
   } catch (error) {
     console.error("Error checking heartbeats:", error);
     throw error;

@@ -17,34 +17,63 @@ exports.detectAnomalies = void 0;
 const locationlogs_1 = __importDefault(require("../models/locationlogs"));
 const punch_1 = __importDefault(require("../models/punch"));
 const anomaly_1 = __importDefault(require("../models/anomaly"));
+const user_1 = __importDefault(require("../models/user"));
 const notificationService_1 = require("./notificationService");
-const detectAnomalies = (userId, log) => __awaiter(void 0, void 0, void 0, function* () {
-    const recentLogs = yield locationlogs_1.default.find({ user: userId }).sort({ timestamp: -1 }).limit(10);
-    const recentPunches = yield punch_1.default.find({ user: userId }).sort({ time: -1 }).limit(5);
-    // Repeated punch
-    if (recentPunches.length > 1 && recentPunches[0].location.lat === recentPunches[1].location.lat && recentPunches[0].type === "in") {
-        yield logAnomaly(userId, "repeated_punch", "Same location punch detected");
+// ── Helper: resolve employee name once per detectAnomalies call ───────────────
+const resolveEmployeeName = (userId) => __awaiter(void 0, void 0, void 0, function* () {
+    var _a;
+    const user = yield user_1.default.findById(userId).lean();
+    return (_a = user === null || user === void 0 ? void 0 : user.name) !== null && _a !== void 0 ? _a : userId;
+});
+// ── Helper: save anomaly + optionally fire WhatsApp alert ─────────────────────
+const logAnomaly = (userId_1, employeeName_1, type_1, description_1, ...args_1) => __awaiter(void 0, [userId_1, employeeName_1, type_1, description_1, ...args_1], void 0, function* (userId, employeeName, type, description, notify = false) {
+    yield anomaly_1.default.create({ user: userId, type, description });
+    if (notify && process.env.HR_WHATSAPP_TO) {
+        yield (0, notificationService_1.sendAnomalyAlert)(userId, employeeName, type, description);
     }
-    // Unrealistic speed
+});
+// ── Speed helper ──────────────────────────────────────────────────────────────
+const calculateSpeed = (log1, log2) => {
+    const R = 6371; // Earth radius km
+    const dLat = ((log1.location.lat - log2.location.lat) * Math.PI) / 180;
+    const dLon = ((log1.location.lng - log2.location.lng) * Math.PI) / 180;
+    const a = Math.sin(dLat / 2) ** 2 +
+        Math.cos((log2.location.lat * Math.PI) / 180) *
+            Math.cos((log1.location.lat * Math.PI) / 180) *
+            Math.sin(dLon / 2) ** 2;
+    const distanceKm = 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    const deltaHours = Math.abs(new Date(log1.timestamp).getTime() - new Date(log2.timestamp).getTime()) /
+        (1000 * 60 * 60);
+    return deltaHours > 0 ? distanceKm / deltaHours : 0;
+};
+// ── Main ──────────────────────────────────────────────────────────────────────
+const detectAnomalies = (userId, log) => __awaiter(void 0, void 0, void 0, function* () {
+    const [recentLogs, recentPunches, employeeName] = yield Promise.all([
+        locationlogs_1.default.find({ user: userId }).sort({ timestamp: -1 }).limit(10),
+        punch_1.default.find({ user: userId }).sort({ time: -1 }).limit(5),
+        resolveEmployeeName(userId),
+    ]);
+    // ── Repeated punch at same location ────────────────────────────────────────
+    if (recentPunches.length > 1 &&
+        recentPunches[0].type === "in" &&
+        recentPunches[0].location.lat === recentPunches[1].location.lat &&
+        recentPunches[0].location.lng === recentPunches[1].location.lng) {
+        yield logAnomaly(userId, employeeName, "repeated_punch", "Punch-in detected from the same location twice", true // notify HR
+        );
+    }
+    // ── Unrealistic speed ───────────────────────────────────────────────────────
     if (recentLogs.length > 1) {
         const speed = calculateSpeed(recentLogs[0], recentLogs[1]);
-        if (speed > 200) { // km/h
-            yield logAnomaly(userId, "unrealistic_speed", `Speed: ${speed} km/h`);
+        if (speed > 200) {
+            yield logAnomaly(userId, employeeName, "unrealistic_speed", `Speed of ${speed.toFixed(1)} km/h detected between last two locations`, true // notify HR
+            );
         }
     }
-    // Excessive idle
-    if (recentLogs.length > 1 && (Date.now() - recentLogs[0].timestamp.getTime()) > 3600000) { // 1hr
-        yield logAnomaly(userId, "excessive_idle", "No movement for 1 hour");
-        yield (0, notificationService_1.sendWhatsAppAlert)("hr_phone", "Idle alert for employee");
+    // ── Excessive idle (no new log for 1 hour) ──────────────────────────────────
+    if (recentLogs.length > 0 &&
+        Date.now() - new Date(recentLogs[0].timestamp).getTime() > 3600000) {
+        yield logAnomaly(userId, employeeName, "excessive_idle", "No movement or location update detected for over 1 hour", true // notify HR
+        );
     }
-    // Short visit (from tasks, assume integrated)
 });
 exports.detectAnomalies = detectAnomalies;
-const logAnomaly = (userId, type, desc) => __awaiter(void 0, void 0, void 0, function* () {
-    const anomaly = new anomaly_1.default({ user: userId, type, description: desc });
-    yield anomaly.save();
-});
-const calculateSpeed = (log1, log2) => {
-    // Implement
-    return 0;
-};
