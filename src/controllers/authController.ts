@@ -14,7 +14,8 @@ export const register = [
   async (req: Request, res: Response) => {
     const { 
       name, email, password, role, department, phone, 
-      managerId, aadhaarNumber, address, employeeId, post 
+      managerId, aadhaarNumber, address, employeeId, post,
+      homeLat, homeLng, homeAddress
     } = req.body;
 
     let profilePicture = "";
@@ -40,6 +41,19 @@ export const register = [
         return res.status(400).json({ message: "User exists" });
       }
 
+      const homeLocation: any = {};
+      if (homeLat != null) {
+        const latNum = parseFloat(homeLat as any);
+        if (!isNaN(latNum)) homeLocation.lat = latNum;
+      }
+      if (homeLng != null) {
+        const lngNum = parseFloat(homeLng as any);
+        if (!isNaN(lngNum)) homeLocation.lng = lngNum;
+      }
+      if (homeAddress != null) {
+        homeLocation.address = homeAddress;
+      }
+
       const user = new User({
         name,
         email,
@@ -47,12 +61,13 @@ export const register = [
         role,
         department,
         phone,
-        profilePicture,                    // ← saved here
+        profilePicture,                    
         ...(aadhaarNumber && { aadhaarNumber }),
         ...(address && { address }),
         ...(employeeId && { employeeId }),
         ...(post && { post }),
-        ...(managerId && { managedBy: managerId }),   // ← fixed (was missing)
+        ...(managerId && { managedBy: managerId }),
+        ...(Object.keys(homeLocation).length > 0 && { homeLocation }),
       });
 
       await user.save();
@@ -76,12 +91,13 @@ export const register = [
           role,
           department,
           phone,
-          profilePicture,                  // ← now returned
+          profilePicture,                  
           managerId,
           aadhaarNumber,
           address,
           employeeId,
           post,
+          homeLocation: user.homeLocation || null,
         },
       });
     } catch (error) {
@@ -157,6 +173,7 @@ export const login = async (req: Request, res: Response) => {
         joiningDate: user.joiningDate,
         score,
         rank,
+        homeLocation: user.homeLocation || null,
       },
     });
   } catch (error) {

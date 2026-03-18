@@ -23,7 +23,7 @@ const upload = (0, multer_1.default)({ storage: multer_1.default.memoryStorage()
 exports.register = [
     upload.single("profilePicture"), // ← multer middleware (optional field)
     (req, res) => __awaiter(void 0, void 0, void 0, function* () {
-        const { name, email, password, role, department, phone, managerId, aadhaarNumber, address, employeeId, post } = req.body;
+        const { name, email, password, role, department, phone, managerId, aadhaarNumber, address, employeeId, post, homeLat, homeLng, homeAddress } = req.body;
         let profilePicture = "";
         try {
             // === Upload profile picture to Cloudinary (if file sent) ===
@@ -42,13 +42,27 @@ exports.register = [
             if (existingUser) {
                 return res.status(400).json({ message: "User exists" });
             }
-            const user = new user_1.default(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign({ name,
+            const homeLocation = {};
+            if (homeLat != null) {
+                const latNum = parseFloat(homeLat);
+                if (!isNaN(latNum))
+                    homeLocation.lat = latNum;
+            }
+            if (homeLng != null) {
+                const lngNum = parseFloat(homeLng);
+                if (!isNaN(lngNum))
+                    homeLocation.lng = lngNum;
+            }
+            if (homeAddress != null) {
+                homeLocation.address = homeAddress;
+            }
+            const user = new user_1.default(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign({ name,
                 email,
                 password,
                 role,
                 department,
                 phone,
-                profilePicture }, (aadhaarNumber && { aadhaarNumber })), (address && { address })), (employeeId && { employeeId })), (post && { post })), (managerId && { managedBy: managerId })));
+                profilePicture }, (aadhaarNumber && { aadhaarNumber })), (address && { address })), (employeeId && { employeeId })), (post && { post })), (managerId && { managedBy: managerId })), (Object.keys(homeLocation).length > 0 && { homeLocation })));
             yield user.save();
             // Auto-generate employeeId for employees
             if (role === "employee") {
@@ -67,12 +81,13 @@ exports.register = [
                     role,
                     department,
                     phone,
-                    profilePicture, // ← now returned
+                    profilePicture,
                     managerId,
                     aadhaarNumber,
                     address,
                     employeeId,
                     post,
+                    homeLocation: user.homeLocation || null,
                 },
             });
         }
@@ -139,6 +154,7 @@ const login = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
                 joiningDate: user.joiningDate,
                 score,
                 rank,
+                homeLocation: user.homeLocation || null,
             },
         });
     }

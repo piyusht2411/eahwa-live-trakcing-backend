@@ -85,63 +85,171 @@ export const endBreak = async (req: AuthRequest, res: Response) => {
     }
 };
 
+
 export const getAllBreaks = async (req: AuthRequest, res: Response) => {
-    const { date, month } = req.query;
+  try {
+    // ────────────────────────────────────────────────
+    //               Query Parameters
+    // ────────────────────────────────────────────────
+    const {
+      page = "1",
+      limit = "20",
+      startDate,          // YYYY-MM-DD
+      endDate,            // YYYY-MM-DD
+      status,             // "active" | "ended" | "overdue" | "all" (default: all)
+      search,             // employee name partial search
+      month,              // fallback if no date range → "2025-03"
+    } = req.query;
 
-    try {
-        let query: any = {};
+    const pageNum = Math.max(1, parseInt(page as string, 10));
+    const limitNum = Math.min(100, Math.max(1, parseInt(limit as string, 10)));
+    const skip = (pageNum - 1) * limitNum;
 
-        if (date) {
-            const start = new Date(date as string);
-            start.setHours(0, 0, 0, 0);
-            const end = new Date(date as string);
-            end.setHours(23, 59, 59, 999);
-            query.startTime = { $gte: start, $lte: end };
-        } else if (month) {
-            const [year, mon] = (month as string).split("-").map(Number);
-            query.startTime = { $gte: new Date(year, mon - 1, 1), $lte: new Date(year, mon, 0, 23, 59, 59, 999) };
+    // ────────────────────────────────────────────────
+    //                Build MongoDB Query
+    // ────────────────────────────────────────────────
+    const query: any = {};
+
+    // 1. Date range filter (preferred over month)
+    if (startDate || endDate) {
+      query.startTime = {};
+
+      if (startDate) {
+        const start = new Date(startDate as string);
+        start.setHours(0, 0, 0, 0);
+        query.startTime.$gte = start;
+      }
+
+      if (endDate) {
+        const end = new Date(endDate as string);
+        end.setHours(23, 59, 59, 999);
+        query.startTime.$lte = end;
+      }
+    }
+    // Fallback: month filter (e.g. "2025-03")
+    else if (month) {
+      const [year, mon] = (month as string).split("-").map(Number);
+      if (!isNaN(year) && !isNaN(mon)) {
+        query.startTime = {
+          $gte: new Date(year, mon - 1, 1),
+          $lte: new Date(year, mon, 0, 23, 59, 59, 999),
+        };
+      }
+    }
+
+    // 2. Search by employee name (requires population → we'll use $lookup or post-filter)
+    //    → easiest is to populate first and filter in JS for small/medium datasets
+    //    → for large scale → use aggregation with $lookup + $match
+
+    // 3. Status filter (active/ended/overdue)
+    const now = new Date();
+    if (status && status !== "all") {
+      if (status === "active") {
+        query.endTime = { $exists: false };
+      } else if (status === "ended") {
+        query.endTime = { $exists: true };
+      } else if (status === "overdue") {
+        // running breaks longer than 30 minutes
+        query.endTime = { $exists: false };
+        // We'll calculate running time later — can't do >30min directly in query
+        // → we'll filter in JS after fetch
+      }
+    }
+
+    // ────────────────────────────────────────────────
+    //              Fetch Breaks with Pagination
+    // ────────────────────────────────────────────────
+    const breaks = await Break.find(query)
+      .populate({
+        path: "user",
+        select: "name managedBy",
+        populate: {
+          path: "managedBy",
+          select: "name",
+        },
+      })
+      .sort({ startTime: -1 })
+      .skip(skip)
+      .limit(limitNum)
+      .lean();
+
+    // ────────────────────────────────────────────────
+    //       Post-processing + status calculation
+    // ────────────────────────────────────────────────
+    const enrichedBreaks = breaks
+      .map((b: any) => {
+        const user = b.user || {};
+        const manager = user.managedBy || {};
+
+        const start = new Date(b.startTime);
+        const isEnded = !!b.endTime;
+        let runningMinutes = 0;
+
+        if (!isEnded) {
+          runningMinutes = Math.round((now.getTime() - start.getTime()) / 60000);
         }
 
-        const breaks = await Break.find(query)
-            .populate({ path: "user", select: "name managedBy", populate: { path: "managedBy", select: "name" } })
-            .sort({ startTime: -1 })
-            .lean();
+        let breakStatus: string;
+        if (isEnded) {
+          breakStatus = "ended";
+        } else if (runningMinutes > 30) {
+          breakStatus = "overdue";
+        } else {
+          breakStatus = "active";
+        }
 
-        const now = Date.now();
-        const data = breaks.map((b: any) => {
-            const user = b.user || {};
-            const manager = user.managedBy || {};
-            const runningMins = !b.endTime
-                ? Math.round((now - new Date(b.startTime).getTime()) / 60000)
-                : 0;
+        return {
+          _id: b._id,
+          employeeName: user.name || "Unknown",
+          managerName: manager.name || "Unknown",
+          date: start.toISOString().split("T")[0],
+          breakStart: b.startTime,
+          breakEnd: b.endTime || null,
+          duration: b.duration ?? runningMinutes,
+          status: breakStatus,
+          startLocation: b.startLocation || null,
+          endLocation: b.endLocation || null,
+        };
+      })
+      // Optional: filter by status in memory if "overdue" was requested
+      .filter((b) => {
+        if (status === "overdue") return b.status === "overdue";
+        return true;
+      });
 
-            let status: string;
-            if (b.endTime) status = "ended";
-            else if (runningMins > 30) status = "overdue";
-            else status = "active";
+    // ────────────────────────────────────────────────
+    //             Optional: name search in memory
+    // ────────────────────────────────────────────────
+    let finalData = enrichedBreaks;
 
-            return {
-                _id: b._id,
-                employeeName: user.name || "Unknown",
-                managerName: manager.name || "Unknown",
-                date: new Date(b.startTime).toISOString().split("T")[0],
-                breakStart: b.startTime,
-                breakEnd: b.endTime || null,
-                duration: b.duration ?? runningMins,
-
-                // ← NEW: Both locations
-                startLocation: b.startLocation || null,
-                endLocation: b.endLocation || null,
-
-                status,
-            };
-        });
-
-        res.status(200).json({ success: true, data });
-    } catch (error) {
-        console.error("Get all breaks error:", error);
-        res.status(500).json({ success: false, message: "Server error" });
+    if (search && typeof search === "string" && search.trim()) {
+      const searchLower = search.trim().toLowerCase();
+      finalData = enrichedBreaks.filter((b) =>
+        b.employeeName.toLowerCase().includes(searchLower)
+      );
     }
+
+    // ────────────────────────────────────────────────
+    //                   Pagination Meta
+    // ────────────────────────────────────────────────
+    const total = await Break.countDocuments(query); // Note: doesn't include post-filters
+
+    res.status(200).json({
+      success: true,
+      pagination: {
+        page: pageNum,
+        limit: limitNum,
+        total,
+        pages: Math.ceil(total / limitNum),
+        hasNext: pageNum * limitNum < total,
+        hasPrev: pageNum > 1,
+      },
+      data: finalData,
+    });
+  } catch (error) {
+    console.error("Get all breaks error:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
 };
 
 export const getTodayBreaks = async (req: AuthRequest, res: Response) => {
