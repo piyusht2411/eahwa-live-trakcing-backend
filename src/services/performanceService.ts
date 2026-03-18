@@ -4,6 +4,7 @@ import Task from "../models/task";
 import LocationLog from "../models/locationlogs";
 import Performance from "../models/performance";
 import { IPerformance } from "../types";
+import { haversineDistance } from "../utils/healper";
 
 export const calculateScore = async (userId: string, period: "daily" | "weekly" | "monthly", start: Date, end: Date): Promise<IPerformance> => {
   // Fetch data
@@ -46,10 +47,15 @@ export const calculateScore = async (userId: string, period: "daily" | "weekly" 
   return perf;
 };
 
-// Placeholder functions
 const calculateDistance = (logs: any[]) => {
-  // Haversine formula implementation
-  return 0; // km
+  let total = 0;
+  for (let i = 1; i < logs.length; i++) {
+    total += haversineDistance(
+      logs[i - 1].location.lat, logs[i - 1].location.lng,
+      logs[i].location.lat, logs[i].location.lng
+    );
+  }
+  return parseFloat(total.toFixed(2));
 };
 
 const calculateProductiveTime = (logs: any[], tasks: any[]) => {

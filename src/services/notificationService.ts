@@ -29,3 +29,19 @@ export const sendWhatsAppAlert = async (to: string, message: string) => {
     body: message,
   });
 };
+
+// export const sendWhatsAppTemplate = async (
+//   to: string,
+//   templateName: string,
+//   variables: Record<string, string>
+// ) => {
+//   await client.messages.create({
+//     from: `whatsapp:${process.env.TWILIO_WHATSAPP_FROM}`,
+//     to: `whatsapp:${to}`,
+//     template: {
+//       name: templateName,
+//       language: "en",
+//       components: [{ type: "body", parameters: Object.values(variables).map(v => ({ type: "text", text: v })) }]
+//     },
+//   });
+// };

@@ -3,7 +3,9 @@ import { AuthRequest } from "../types/authRequest";
 import Performance from "../models/performance";
 import Punch from "../models/punch";
 import Task from "../models/task";
+import LocationLog from "../models/locationlogs";
 import { calculateScore } from "../services/performanceService";
+import { haversineDistance } from "../utils/healper";
 
 export const getDashboardStats = async (req: AuthRequest, res: Response) => {
     const userId = req.user?._id;
@@ -38,6 +40,21 @@ export const getDashboardStats = async (req: AuthRequest, res: Response) => {
             date: { $gte: today, $lte: endOfDay }
         }).sort({ time: 1 });
 
+        // Calculate distance from today's location logs (live)
+        const locationLogs = await LocationLog.find({
+            user: userId,
+            timestamp: { $gte: today, $lte: endOfDay }
+        }).sort({ timestamp: 1 }).select("location").lean();
+
+        let distanceTraveled = 0;
+        for (let i = 1; i < locationLogs.length; i++) {
+            distanceTraveled += haversineDistance(
+                locationLogs[i - 1].location.lat, locationLogs[i - 1].location.lng,
+                locationLogs[i].location.lat, locationLogs[i].location.lng
+            );
+        }
+        distanceTraveled = parseFloat(distanceTraveled.toFixed(2));
+
         // Calculate basic hours worked from punches
         let hoursWorked = 0;
         if (punches.length > 0) {
@@ -54,7 +71,7 @@ export const getDashboardStats = async (req: AuthRequest, res: Response) => {
             success: true,
             data: {
                 score: performance.score,
-                distanceTraveled: performance.metrics?.distance || 0,
+                distanceTraveled,
                 hoursWorked: hoursWorked ? parseFloat(hoursWorked.toFixed(2)) : 0,
                 tasksCompleted: tasks.length,
                 punchesToday: punches.length

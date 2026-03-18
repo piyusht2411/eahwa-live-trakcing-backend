@@ -28,6 +28,16 @@ export interface IUser extends Document {
 
 export interface IBreak extends Document {
   user: Types.ObjectId | IUser;
+  startLocation: {
+    lat: number;
+    lng: number;
+    address?: string;
+  };
+  endLocation?: {
+    lat: number;
+    lng: number;
+    address?: string;
+  };
   startTime: Date;
   endTime?: Date;
   type?: "start" | "end";
@@ -51,6 +61,7 @@ export interface IPunch extends Document {
   isAutomatic?: boolean;
   reason?: string | null;
   verified: boolean;
+  isLate?: boolean;
 }
 
 export interface ILocationLog extends Document {
@@ -70,7 +81,8 @@ export interface StockItem {
   model: string;
   variation?: string;
   quantity: number;
-  batteryStock: number;
+  batteryType?: "Lead Acid" | "Lithium-Ion";
+  batteryQuantity?: number;
 }
 
 export interface ITask extends Document {

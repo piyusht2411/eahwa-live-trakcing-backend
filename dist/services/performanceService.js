@@ -18,6 +18,7 @@ const punch_1 = __importDefault(require("../models/punch"));
 const task_1 = __importDefault(require("../models/task"));
 const locationlogs_1 = __importDefault(require("../models/locationlogs"));
 const performance_1 = __importDefault(require("../models/performance"));
+const healper_1 = require("../utils/healper");
 const calculateScore = (userId, period, start, end) => __awaiter(void 0, void 0, void 0, function* () {
     // Fetch data
     const punches = yield punch_1.default.find({ user: userId, date: { $gte: start, $lte: end } });
@@ -54,10 +55,12 @@ const calculateScore = (userId, period, start, end) => __awaiter(void 0, void 0,
     return perf;
 });
 exports.calculateScore = calculateScore;
-// Placeholder functions
 const calculateDistance = (logs) => {
-    // Haversine formula implementation
-    return 0; // km
+    let total = 0;
+    for (let i = 1; i < logs.length; i++) {
+        total += (0, healper_1.haversineDistance)(logs[i - 1].location.lat, logs[i - 1].location.lng, logs[i].location.lat, logs[i].location.lng);
+    }
+    return parseFloat(total.toFixed(2));
 };
 const calculateProductiveTime = (logs, tasks) => {
     // Classify based on tasks (visits), travel between, idle detection

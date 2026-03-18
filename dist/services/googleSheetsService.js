@@ -23,6 +23,7 @@ const ATTENDANCE_HEADERS = [
     "Location",
     "Selfie URL",
     "Type",
+    "Late Punch In",
 ];
 const formatDate = (date) => {
     return date.toLocaleDateString("en-IN", {
@@ -69,6 +70,25 @@ const updatePunchSheet = (punchData) => __awaiter(void 0, void 0, void 0, functi
     const time = new Date(punchData.time);
     const address = ((_b = punchData.location) === null || _b === void 0 ? void 0 : _b.address) ||
         `${(_c = punchData.location) === null || _c === void 0 ? void 0 : _c.lat}, ${(_d = punchData.location) === null || _d === void 0 ? void 0 : _d.lng}`;
+    // let latePunchIn = "";
+    // if (punchData.type === "in") {
+    //   // Reuse the same logic as virtual (duplicate for sheet consistency)
+    //   const formatter = new Intl.DateTimeFormat('en-US', {
+    //     timeZone: 'Asia/Kolkata',
+    //     hour: '2-digit',
+    //     minute: '2-digit',
+    //     hour12: false,
+    //   });
+    //   const parts = formatter.formatToParts(time).reduce((acc: any, part) => {
+    //     if (part.type === 'hour' || part.type === 'minute') {
+    //       acc[part.type] = parseInt(part.value, 10);
+    //     }
+    //     return acc;
+    //   }, {});
+    //   const hour = parts.hour;
+    //   const minute = parts.minute;
+    //   latePunchIn = (hour > 10) || (hour === 10 && minute > 15) ? "Yes" : "No";
+    // }
     yield sheet.addRow({
         "Employee Name": punchData.employeeName,
         "Employee ID": punchData.employeeId,
@@ -79,6 +99,9 @@ const updatePunchSheet = (punchData) => __awaiter(void 0, void 0, void 0, functi
         "Location": address,
         "Selfie URL": punchData.selfie || "N/A",
         "Type": punchData.type,
+        "Late Punch In": punchData.type === "in"
+            ? (punchData.isLate ? "Yes" : "No")
+            : "",
     });
 });
 exports.updatePunchSheet = updatePunchSheet;

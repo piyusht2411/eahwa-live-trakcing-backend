@@ -16,9 +16,11 @@ exports.getDashboardStats = void 0;
 const performance_1 = __importDefault(require("../models/performance"));
 const punch_1 = __importDefault(require("../models/punch"));
 const task_1 = __importDefault(require("../models/task"));
+const locationlogs_1 = __importDefault(require("../models/locationlogs"));
 const performanceService_1 = require("../services/performanceService");
+const healper_1 = require("../utils/healper");
 const getDashboardStats = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
-    var _a, _b;
+    var _a;
     const userId = (_a = req.user) === null || _a === void 0 ? void 0 : _a._id;
     try {
         const today = new Date();
@@ -44,6 +46,16 @@ const getDashboardStats = (req, res) => __awaiter(void 0, void 0, void 0, functi
             user: userId,
             date: { $gte: today, $lte: endOfDay }
         }).sort({ time: 1 });
+        // Calculate distance from today's location logs (live)
+        const locationLogs = yield locationlogs_1.default.find({
+            user: userId,
+            timestamp: { $gte: today, $lte: endOfDay }
+        }).sort({ timestamp: 1 }).select("location").lean();
+        let distanceTraveled = 0;
+        for (let i = 1; i < locationLogs.length; i++) {
+            distanceTraveled += (0, healper_1.haversineDistance)(locationLogs[i - 1].location.lat, locationLogs[i - 1].location.lng, locationLogs[i].location.lat, locationLogs[i].location.lng);
+        }
+        distanceTraveled = parseFloat(distanceTraveled.toFixed(2));
         // Calculate basic hours worked from punches
         let hoursWorked = 0;
         if (punches.length > 0) {
@@ -58,7 +70,7 @@ const getDashboardStats = (req, res) => __awaiter(void 0, void 0, void 0, functi
             success: true,
             data: {
                 score: performance.score,
-                distanceTraveled: ((_b = performance.metrics) === null || _b === void 0 ? void 0 : _b.distance) || 0,
+                distanceTraveled,
                 hoursWorked: hoursWorked ? parseFloat(hoursWorked.toFixed(2)) : 0,
                 tasksCompleted: tasks.length,
                 punchesToday: punches.length

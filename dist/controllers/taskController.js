@@ -17,6 +17,8 @@ const multer_1 = __importDefault(require("multer"));
 const cloudinary_1 = __importDefault(require("../config/cloudinary"));
 const task_1 = __importDefault(require("../models/task"));
 const user_1 = __importDefault(require("../models/user"));
+const locationlogs_1 = __importDefault(require("../models/locationlogs"));
+const healper_1 = require("../utils/healper");
 const punchCheck_1 = require("../utils/punchCheck");
 const upload = (0, multer_1.default)({ storage: multer_1.default.memoryStorage() });
 exports.submitTask = [
@@ -68,28 +70,86 @@ exports.submitTask = [
     }),
 ];
 const getTasks = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
-    console.log(req.user);
-    const { userId, start, end } = req.query;
     try {
-        const startDate = start ? new Date(start) : null;
-        const endDate = end ? new Date(end) : null;
-        let query = {};
-        if (startDate && !isNaN(startDate.getTime()) && endDate && !isNaN(endDate.getTime())) {
-            query.date = { $gte: startDate, $lte: endDate };
+        const { date, // YYYY-MM-DD (single day)
+        year, month, // 1-12
+        page = "1", limit = "20" } = req.query;
+        // ====================== Pagination ======================
+        const currentPage = Math.max(1, parseInt(page) || 1);
+        const pageSize = Math.min(100, Math.max(1, parseInt(limit) || 20));
+        // ====================== Date Filter Logic ======================
+        let startDate;
+        let endDate;
+        if (date && typeof date === "string") {
+            // Single day
+            const [y, m, d] = date.split("-").map(Number);
+            startDate = new Date(y, m - 1, d, 0, 0, 0, 0);
+            endDate = new Date(y, m - 1, d, 23, 59, 59, 999);
         }
-        if (req.user.role === "manager") {
+        else if (year && month) {
+            // Full month
+            const y = parseInt(year);
+            const m = parseInt(month) - 1;
+            startDate = new Date(y, m, 1, 0, 0, 0, 0);
+            endDate = new Date(y, m + 1, 0, 23, 59, 59, 999);
+        }
+        else if (year) {
+            // Full year
+            const y = parseInt(year);
+            startDate = new Date(y, 0, 1, 0, 0, 0, 0);
+            endDate = new Date(y, 11, 31, 23, 59, 59, 999);
+        }
+        else {
+            // DEFAULT: TODAY (what you asked)
+            const now = new Date();
+            startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+            endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+        }
+        // ====================== Role-based User Filter ======================
+        let userFilter = {};
+        if (req.user.role === "employee") {
+            userFilter.user = req.user._id; // Only current user
+        }
+        else if (req.user.role === "manager") {
             const team = yield user_1.default.find({ managedBy: req.user._id }).select("_id");
-            query.user = { $in: team.map((u) => u._id) };
+            userFilter.user = { $in: team.map((u) => u._id) }; // Entire team
         }
-        else if (req.user.role === "employee") {
-            query.user = req.user._id;
+        else if (req.user.role === "admin") {
+            userFilter = {}; // Admin sees everyone (you can restrict if needed)
         }
-        const tasks = yield task_1.default.find(query).populate("user", "name employeeId");
-        res.json(tasks);
+        // ====================== Build Query ======================
+        const query = Object.assign(Object.assign({}, userFilter), { date: { $gte: startDate, $lte: endDate } });
+        // ====================== Count + Fetch ======================
+        const totalRecords = yield task_1.default.countDocuments(query);
+        const tasks = yield task_1.default.find(query)
+            .populate("user", "name employeeId department")
+            .sort({ date: -1, createdAt: -1 }) // Latest first
+            .skip((currentPage - 1) * pageSize)
+            .limit(pageSize)
+            .lean();
+        const totalPages = Math.ceil(totalRecords / pageSize);
+        res.status(200).json({
+            success: true,
+            data: tasks,
+            pagination: {
+                totalRecords,
+                totalPages,
+                currentPage,
+                pageSize,
+                hasNextPage: currentPage < totalPages,
+                hasPrevPage: currentPage > 1,
+            },
+            filters: {
+                applied: date ? "day" : year && month ? "month" : year ? "year" : "today",
+                date: date || undefined,
+                year: year || undefined,
+                month: month || undefined,
+            },
+        });
     }
     catch (error) {
-        console.log(error);
-        res.status(500).json({ message: "Error" });
+        console.error("Get tasks error:", error);
+        res.status(500).json({ success: false, message: "Server error" });
     }
 });
 exports.getTasks = getTasks;
@@ -213,25 +273,58 @@ const getVisits = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
         const tasks = yield task_1.default.find(query)
             .populate({ path: "user", select: "name managedBy", populate: { path: "managedBy", select: "name" } })
             .lean();
-        let data = tasks.map((task) => {
+        // Build per-user per-date distance map from LocationLogs
+        const userDateKeys = new Set();
+        tasks.forEach((task) => {
             var _a, _b;
+            const userId = (_b = (((_a = task.user) === null || _a === void 0 ? void 0 : _a._id) || task.user)) === null || _b === void 0 ? void 0 : _b.toString();
+            const dateStr = new Date(task.date).toISOString().split("T")[0];
+            if (userId)
+                userDateKeys.add(`${userId}__${dateStr}`);
+        });
+        const distanceMap = {};
+        yield Promise.all(Array.from(userDateKeys).map((key) => __awaiter(void 0, void 0, void 0, function* () {
+            const [userId, dateStr] = key.split("__");
+            const start = new Date(dateStr);
+            start.setHours(0, 0, 0, 0);
+            const end = new Date(dateStr);
+            end.setHours(23, 59, 59, 999);
+            const logs = yield locationlogs_1.default.find({ user: userId, timestamp: { $gte: start, $lte: end } })
+                .sort({ timestamp: 1 })
+                .lean();
+            let total = 0;
+            for (let i = 1; i < logs.length; i++) {
+                total += (0, healper_1.haversineDistance)(logs[i - 1].location.lat, logs[i - 1].location.lng, logs[i].location.lat, logs[i].location.lng);
+            }
+            distanceMap[key] = parseFloat(total.toFixed(2));
+        })));
+        let data = tasks.map((task) => {
+            var _a, _b, _c;
             const user = task.user || {};
             const manager = user.managedBy || {};
             const d = new Date(task.date);
+            const userId = (_a = (user._id || task.user)) === null || _a === void 0 ? void 0 : _a.toString();
+            const dateStr = d.toISOString().split("T")[0];
             return {
                 _id: task._id,
                 employeeName: user.name || "Unknown",
                 managerName: manager.name || "Unknown",
-                visitDate: d.toISOString().split("T")[0],
+                visitDate: dateStr,
                 visitTime: d.toTimeString().slice(0, 5),
                 showroomName: task.showroomName,
-                address: ((_a = task.address) === null || _a === void 0 ? void 0 : _a.fullAddress) || "",
+                address: ((_b = task.address) === null || _b === void 0 ? void 0 : _b.fullAddress) || "",
                 timeSpent: task.duration || 0,
-                distance: 0,
+                distance: distanceMap[`${userId}__${dateStr}`] || 0,
                 stockUpdated: Array.isArray(task.stock) && task.stock.length > 0,
-                totalVehicles: (task.stock || []).reduce((sum, s) => sum + (s.quantity || 0), 0),
-                batteryCount: (task.stock || []).reduce((sum, s) => sum + (s.batteryStock || 0), 0),
-                photoUrl: ((_b = task.photos) === null || _b === void 0 ? void 0 : _b[0]) || null,
+                totalVehicles: (task.stock || []).reduce((sum, s) => {
+                    // only count if it's a scooter item
+                    return "model" in s && s.model ? sum + (s.quantity || 0) : sum;
+                }, 0),
+                batteryCount: (task.stock || []).reduce((sum, s) => {
+                    // only count if it's a battery item
+                    return "batteryType" in s && s.batteryType ? sum + (s.batteryQuantity || 0) : sum;
+                }, 0),
+                photoUrl: ((_c = task.photos) === null || _c === void 0 ? void 0 : _c[0]) || null,
                 status: "completed",
             };
         });
@@ -270,25 +363,27 @@ const getStock = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
             if (Array.isArray(task.stock)) {
                 task.stock.forEach((item) => {
                     var _a, _b;
-                    if ((item.quantity || 0) > 0) {
+                    // Scooter
+                    if ("model" in item && item.model && (item.quantity || 0) > 0) {
                         allStock.push({
                             taskId: task._id,
                             employee: ((_a = task.user) === null || _a === void 0 ? void 0 : _a.name) || "Unknown",
                             showroom: task.showroomName,
                             date: task.date,
-                            item: item.model,
+                            item: item.model + (item.variation ? ` (${item.variation})` : ""),
                             qty: item.quantity,
                             itemType: "scooter",
                         });
                     }
-                    if ((item.batteryStock || 0) > 0) {
+                    // Battery
+                    if ("batteryType" in item && item.batteryType && (item.batteryQuantity || 0) > 0) {
                         allStock.push({
                             taskId: task._id,
                             employee: ((_b = task.user) === null || _b === void 0 ? void 0 : _b.name) || "Unknown",
                             showroom: task.showroomName,
                             date: task.date,
-                            item: `${item.model} Battery`,
-                            qty: item.batteryStock,
+                            item: `${item.batteryType} Battery`,
+                            qty: item.batteryQuantity,
                             itemType: "battery",
                         });
                     }

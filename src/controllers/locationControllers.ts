@@ -5,6 +5,7 @@ import User from "../models/user";
 import Alert from "../models/alert";
 import { detectAnomalies } from "../services/anomalyService";
 import { sendWhatsAppAlert } from "../services/notificationService";
+import { Types } from "mongoose";
 
 export const logLocation = async (req: Request, res: Response) => {
   const {
@@ -183,5 +184,40 @@ export const getHeatMap = async (req: Request, res: Response) => {
     res.json(logs);
   } catch (error) {
     res.status(500).json({ message: "Error" });
+  }
+};
+
+export const getTodayLocationHistory = async (req: Request, res: Response) => {
+  const { userId } = req.params;
+
+  try {
+    // Validate ObjectId
+    if (!Types.ObjectId.isValid(userId)) {
+      return res.status(400).json({ success: false, message: "Invalid userId" });
+    }
+
+    // Calculate today (00:00:00 to 23:59:59)
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const tomorrow = new Date(today);
+    tomorrow.setDate(tomorrow.getDate() + 1);
+
+    const logs = await LocationLog.find({
+      user: userId,
+      timestamp: { $gte: today, $lt: tomorrow },   // ← Today only
+    })
+      .select("location timestamp speed battery")   // Only fields needed for map
+      .sort({ timestamp: 1 })                       // ← Oldest to newest (perfect for polyline)
+      .lean();
+
+    res.status(200).json({
+      success: true,
+      data: logs,
+      totalPoints: logs.length,
+      date: today.toISOString().split("T")[0],
+    });
+  } catch (error) {
+    console.error("Today location history error:", error);
+    res.status(500).json({ success: false, message: "Server error" });
   }
 };

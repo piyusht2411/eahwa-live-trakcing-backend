@@ -4,6 +4,8 @@ import multer from "multer";
 import cloudinary from "../config/cloudinary";
 import Task from "../models/task";
 import User from "../models/user";
+import LocationLog from "../models/locationlogs";
+import { haversineDistance } from "../utils/healper";
 import { isUserPunchedIn } from "../utils/punchCheck";
 
 const upload = multer({ storage: multer.memoryStorage() });
@@ -15,13 +17,13 @@ export const submitTask = [
     console.log(req.body);
     const userId = req.user._id;
 
-      const punchedIn = await isUserPunchedIn(userId);
-      if (!punchedIn) {
-        return res.status(403).json({ 
-          success: false, 
-          message: "You must be punched in to submit a task" 
-        });
-      }
+    const punchedIn = await isUserPunchedIn(userId);
+    if (!punchedIn) {
+      return res.status(403).json({
+        success: false,
+        message: "You must be punched in to submit a task"
+      });
+    }
 
     try {
       const photos: string[] = [];
@@ -57,36 +59,109 @@ export const submitTask = [
 
       res.status(201).json({ message: "Task submitted", task });
     } catch (error) {
-     console.error("Task submit error:", error); // ADD THIS
-  res.status(500).json({ message: (error as Error).message || "Error submitting task" });
+      console.error("Task submit error:", error); // ADD THIS
+      res.status(500).json({ message: (error as Error).message || "Error submitting task" });
     }
   },
 ];
 
 export const getTasks = async (req: any, res: Response) => {
-  console.log(req.user);
-  const { userId, start, end } = req.query;
-
   try {
-    const startDate = start ? new Date(start as string) : null;
-    const endDate = end ? new Date(end as string) : null;
+    const { 
+      date,      // YYYY-MM-DD (single day)
+      year, 
+      month,     // 1-12
+      page = "1", 
+      limit = "20"
+    } = req.query;
 
-    let query: any = {};
-    if (startDate && !isNaN(startDate.getTime()) && endDate && !isNaN(endDate.getTime())) {
-      query.date = { $gte: startDate, $lte: endDate };
+    // ====================== Pagination ======================
+    const currentPage = Math.max(1, parseInt(page as string) || 1);
+    const pageSize = Math.min(100, Math.max(1, parseInt(limit as string) || 20));
+
+    // ====================== Date Filter Logic ======================
+    let startDate: Date;
+    let endDate: Date;
+
+    if (date && typeof date === "string") {
+      // Single day
+      const [y, m, d] = (date as string).split("-").map(Number);
+      startDate = new Date(y, m - 1, d, 0, 0, 0, 0);
+      endDate   = new Date(y, m - 1, d, 23, 59, 59, 999);
+    } 
+    else if (year && month) {
+      // Full month
+      const y = parseInt(year as string);
+      const m = parseInt(month as string) - 1;
+      startDate = new Date(y, m, 1, 0, 0, 0, 0);
+      endDate   = new Date(y, m + 1, 0, 23, 59, 59, 999);
+    } 
+    else if (year) {
+      // Full year
+      const y = parseInt(year as string);
+      startDate = new Date(y, 0, 1, 0, 0, 0, 0);
+      endDate   = new Date(y, 11, 31, 23, 59, 59, 999);
+    } 
+    else {
+      // DEFAULT: TODAY (what you asked)
+      const now = new Date();
+      startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+      endDate   = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
     }
-    if (req.user.role === "manager") {
+
+    // ====================== Role-based User Filter ======================
+    let userFilter: any = {};
+
+    if (req.user.role === "employee") {
+      userFilter.user = req.user._id;                    // Only current user
+    } 
+    else if (req.user.role === "manager") {
       const team = await User.find({ managedBy: req.user._id }).select("_id");
-      query.user = { $in: team.map((u: any) => u._id) };
-    } else if (req.user.role === "employee") {
-      query.user = req.user._id;
+      userFilter.user = { $in: team.map((u: any) => u._id) }; // Entire team
+    } 
+    else if (req.user.role === "admin") {
+      userFilter = {}; // Admin sees everyone (you can restrict if needed)
     }
 
-    const tasks = await Task.find(query).populate("user", "name employeeId");
-    res.json(tasks);
+    // ====================== Build Query ======================
+    const query = {
+      ...userFilter,
+      date: { $gte: startDate, $lte: endDate },
+    };
+
+    // ====================== Count + Fetch ======================
+    const totalRecords = await Task.countDocuments(query);
+
+    const tasks = await Task.find(query)
+      .populate("user", "name employeeId department")
+      .sort({ date: -1, createdAt: -1 })   // Latest first
+      .skip((currentPage - 1) * pageSize)
+      .limit(pageSize)
+      .lean();
+
+    const totalPages = Math.ceil(totalRecords / pageSize);
+
+    res.status(200).json({
+      success: true,
+      data: tasks,
+      pagination: {
+        totalRecords,
+        totalPages,
+        currentPage,
+        pageSize,
+        hasNextPage: currentPage < totalPages,
+        hasPrevPage: currentPage > 1,
+      },
+      filters: {
+        applied: date ? "day" : year && month ? "month" : year ? "year" : "today",
+        date: date || undefined,
+        year: year || undefined,
+        month: month || undefined,
+      },
+    });
   } catch (error) {
-    console.log(error);
-    res.status(500).json({ message: "Error" });
+    console.error("Get tasks error:", error);
+    res.status(500).json({ success: false, message: "Server error" });
   }
 };
 
@@ -121,9 +196,9 @@ export const updateTask = [
       if (req.user.role === "employee" || req.user.role === "manager") {
         const punchedIn = await isUserPunchedIn(req.user._id);
         if (!punchedIn) {
-          return res.status(403).json({ 
-            success: false, 
-            message: "You must be punched in to edit a task" 
+          return res.status(403).json({
+            success: false,
+            message: "You must be punched in to edit a task"
           });
         }
       }
@@ -211,23 +286,62 @@ export const getVisits = async (req: any, res: Response) => {
       .populate({ path: "user", select: "name managedBy", populate: { path: "managedBy", select: "name" } })
       .lean();
 
+    // Build per-user per-date distance map from LocationLogs
+    const userDateKeys = new Set<string>();
+    tasks.forEach((task: any) => {
+      const userId = (task.user?._id || task.user)?.toString();
+      const dateStr = new Date(task.date).toISOString().split("T")[0];
+      if (userId) userDateKeys.add(`${userId}__${dateStr}`);
+    });
+
+    const distanceMap: Record<string, number> = {};
+    await Promise.all(
+      Array.from(userDateKeys).map(async (key) => {
+        const [userId, dateStr] = key.split("__");
+        const start = new Date(dateStr);
+        start.setHours(0, 0, 0, 0);
+        const end = new Date(dateStr);
+        end.setHours(23, 59, 59, 999);
+        const logs = await LocationLog.find({ user: userId, timestamp: { $gte: start, $lte: end } })
+          .sort({ timestamp: 1 })
+          .lean();
+        let total = 0;
+        for (let i = 1; i < logs.length; i++) {
+          total += haversineDistance(
+            logs[i - 1].location.lat, logs[i - 1].location.lng,
+            logs[i].location.lat, logs[i].location.lng
+          );
+        }
+        distanceMap[key] = parseFloat(total.toFixed(2));
+      })
+    );
+
     let data = tasks.map((task: any) => {
       const user = task.user || {};
       const manager = user.managedBy || {};
       const d = new Date(task.date);
+      const userId = (user._id || task.user)?.toString();
+      const dateStr = d.toISOString().split("T")[0];
+
       return {
         _id: task._id,
         employeeName: user.name || "Unknown",
         managerName: manager.name || "Unknown",
-        visitDate: d.toISOString().split("T")[0],
+        visitDate: dateStr,
         visitTime: d.toTimeString().slice(0, 5),
         showroomName: task.showroomName,
         address: task.address?.fullAddress || "",
         timeSpent: task.duration || 0,
-        distance: 0,
+        distance: distanceMap[`${userId}__${dateStr}`] || 0,
         stockUpdated: Array.isArray(task.stock) && task.stock.length > 0,
-        totalVehicles: (task.stock || []).reduce((sum: number, s: any) => sum + (s.quantity || 0), 0),
-        batteryCount: (task.stock || []).reduce((sum: number, s: any) => sum + (s.batteryStock || 0), 0),
+        totalVehicles: (task.stock || []).reduce((sum: number, s: any) => {
+          // only count if it's a scooter item
+          return "model" in s && s.model ? sum + (s.quantity || 0) : sum;
+        }, 0),
+        batteryCount: (task.stock || []).reduce((sum: number, s: any) => {
+          // only count if it's a battery item
+          return "batteryType" in s && s.batteryType ? sum + (s.batteryQuantity || 0) : sum;
+        }, 0),
         photoUrl: task.photos?.[0] || null,
         status: "completed",
       };
@@ -251,7 +365,7 @@ export const getStock = async (req: any, res: Response) => {
 
   try {
     let query: any = {};
-    
+
     if (start && end) {
       query.date = { $gte: new Date(start as string), $lte: new Date(end as string) };
     }
@@ -269,28 +383,32 @@ export const getStock = async (req: any, res: Response) => {
 
     // Flatten and aggregate the stock arrays from all tasks
     const allStock: any[] = [];
+
     tasks.forEach(task => {
       if (Array.isArray(task.stock)) {
         task.stock.forEach((item: any) => {
-          if ((item.quantity || 0) > 0) {
+          // Scooter
+          if ("model" in item && item.model && (item.quantity || 0) > 0) {
             allStock.push({
               taskId: task._id,
               employee: (task.user as any)?.name || "Unknown",
               showroom: task.showroomName,
               date: task.date,
-              item: item.model,
+              item: item.model + (item.variation ? ` (${item.variation})` : ""),
               qty: item.quantity,
               itemType: "scooter",
             });
           }
-          if ((item.batteryStock || 0) > 0) {
+
+          // Battery
+          if ("batteryType" in item && item.batteryType && (item.batteryQuantity || 0) > 0) {
             allStock.push({
               taskId: task._id,
               employee: (task.user as any)?.name || "Unknown",
               showroom: task.showroomName,
               date: task.date,
-              item: `${item.model} Battery`,
-              qty: item.batteryStock,
+              item: `${item.batteryType} Battery`,
+              qty: item.batteryQuantity,
               itemType: "battery",
             });
           }

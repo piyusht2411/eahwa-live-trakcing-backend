@@ -17,9 +17,9 @@ export const punch = [
     const authReq = req as AuthRequest;
     const userId = authReq.user?._id;
 
-     if (type === "in") {
-        await closeStaleSession(userId);
-      }
+    if (type === "in") {
+      await closeStaleSession(userId);
+    }
 
     try {
       // Upload selfie
@@ -62,6 +62,7 @@ export const punch = [
         location: punch.location,
         selfie: punch.selfie,
         type,
+        isLate: punch.isLate,
       });
 
       res.status(201).json({ message: "Punch recorded", punch });
@@ -90,10 +91,14 @@ export const getTodayStatus = async (req: AuthRequest, res: Response) => {
     let punchInTime = null;
     let punchOutTime = null;
     let isAutomaticOut = false;
+    let isLatePunchIn = false;
 
     if (punches.length > 0) {
       const firstIn = punches.find((p) => p.type === "in");
-      if (firstIn) punchInTime = firstIn.time;
+      if (firstIn) {
+        punchInTime = firstIn.time;
+        isLatePunchIn = firstIn.isLate || false;
+      }
 
       const lastOut = [...punches].reverse().find((p) => p.type === "out");
       if (lastOut) {
@@ -112,6 +117,7 @@ export const getTodayStatus = async (req: AuthRequest, res: Response) => {
         punchInTime,
         punchOutTime,
         isAutomaticOut,
+        isLatePunchIn,
         punchesToday: punches.length,
       },
     });

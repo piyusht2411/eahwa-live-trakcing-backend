@@ -66,6 +66,7 @@ exports.punch = [
                 location: punch.location,
                 selfie: punch.selfie,
                 type,
+                isLate: punch.isLate,
             });
             res.status(201).json({ message: "Punch recorded", punch });
         }
@@ -91,10 +92,13 @@ const getTodayStatus = (req, res) => __awaiter(void 0, void 0, void 0, function*
         let punchInTime = null;
         let punchOutTime = null;
         let isAutomaticOut = false;
+        let isLatePunchIn = false;
         if (punches.length > 0) {
             const firstIn = punches.find((p) => p.type === "in");
-            if (firstIn)
+            if (firstIn) {
                 punchInTime = firstIn.time;
+                isLatePunchIn = firstIn.isLate || false;
+            }
             const lastOut = [...punches].reverse().find((p) => p.type === "out");
             if (lastOut) {
                 punchOutTime = lastOut.time;
@@ -110,6 +114,7 @@ const getTodayStatus = (req, res) => __awaiter(void 0, void 0, void 0, function*
                 punchInTime,
                 punchOutTime,
                 isAutomaticOut,
+                isLatePunchIn,
                 punchesToday: punches.length,
             },
         });

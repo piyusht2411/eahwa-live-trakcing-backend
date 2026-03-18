@@ -5,18 +5,25 @@ import { isUserPunchedIn } from "../utils/punchCheck";
 
 export const startBreak = async (req: AuthRequest, res: Response) => {
     const userId = req.user?._id;
+    const { location } = req.body;   // ← Expected from mobile app
+
+    if (!location || !location.lat || !location.lng) {
+        return res.status(400).json({
+            success: false,
+            message: "Location is required to start a break"
+        });
+    }
 
     // Check if user is punched in
     const punchedIn = await isUserPunchedIn(userId);
     if (!punchedIn) {
-      return res.status(403).json({ 
-        success: false, 
-        message: "You must be punched in to start a break" 
-      });
+        return res.status(403).json({
+            success: false,
+            message: "You must be punched in to start a break"
+        });
     }
 
     try {
-        // Check if a break is already active
         const activeBreak = await Break.findOne({ user: userId, endTime: { $exists: false } });
         if (activeBreak) {
             return res.status(400).json({ success: false, message: "A break is already active" });
@@ -25,6 +32,7 @@ export const startBreak = async (req: AuthRequest, res: Response) => {
         const newBreak = new Break({
             user: userId,
             startTime: new Date(),
+            startLocation: location,           // ← Saved
             type: "start",
         });
 
@@ -43,9 +51,9 @@ export const startBreak = async (req: AuthRequest, res: Response) => {
 
 export const endBreak = async (req: AuthRequest, res: Response) => {
     const userId = req.user?._id;
+    const { location } = req.body;   // ← Optional but recommended
 
     try {
-        // Find the active break
         const activeBreak = await Break.findOne({ user: userId, endTime: { $exists: false } });
 
         if (!activeBreak) {
@@ -53,11 +61,16 @@ export const endBreak = async (req: AuthRequest, res: Response) => {
         }
 
         const endTime = new Date();
-        const duration = Math.round((endTime.getTime() - new Date(activeBreak.startTime).getTime()) / 60000); // duration in minutes
+        const duration = Math.round((endTime.getTime() - new Date(activeBreak.startTime).getTime()) / 60000);
 
         activeBreak.endTime = endTime;
         activeBreak.type = "end";
         activeBreak.duration = duration;
+
+        // ← Save end location if provided
+        if (location?.lat && location?.lng) {
+            activeBreak.endLocation = location;
+        }
 
         await activeBreak.save();
 
@@ -115,7 +128,11 @@ export const getAllBreaks = async (req: AuthRequest, res: Response) => {
                 breakStart: b.startTime,
                 breakEnd: b.endTime || null,
                 duration: b.duration ?? runningMins,
-                location: "",
+
+                // ← NEW: Both locations
+                startLocation: b.startLocation || null,
+                endLocation: b.endLocation || null,
+
                 status,
             };
         });
@@ -145,7 +162,7 @@ export const getTodayBreaks = async (req: AuthRequest, res: Response) => {
         res.status(200).json({
             success: true,
             data: {
-                breaks,
+                breaks,           // ← Now each break has startLocation & endLocation
                 activeBreak,
                 totalBreakMinutes,
                 breaksTaken: breaks.length,

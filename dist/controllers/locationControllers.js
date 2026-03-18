@@ -12,12 +12,13 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getHeatMap = exports.getLiveTrack = exports.logLocation = void 0;
+exports.getTodayLocationHistory = exports.getHeatMap = exports.getLiveTrack = exports.logLocation = void 0;
 const locationlogs_1 = __importDefault(require("../models/locationlogs"));
 const user_1 = __importDefault(require("../models/user"));
 const alert_1 = __importDefault(require("../models/alert"));
 const anomalyService_1 = require("../services/anomalyService");
 const notificationService_1 = require("../services/notificationService");
+const mongoose_1 = require("mongoose");
 const logLocation = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     const { location, speed, battery, isOffline, gpsDisabled, internetDisabled, deviceOff, } = req.body;
     const userId = req.user._id;
@@ -155,3 +156,35 @@ const getHeatMap = (req, res) => __awaiter(void 0, void 0, void 0, function* () 
     }
 });
 exports.getHeatMap = getHeatMap;
+const getTodayLocationHistory = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    const { userId } = req.params;
+    try {
+        // Validate ObjectId
+        if (!mongoose_1.Types.ObjectId.isValid(userId)) {
+            return res.status(400).json({ success: false, message: "Invalid userId" });
+        }
+        // Calculate today (00:00:00 to 23:59:59)
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const tomorrow = new Date(today);
+        tomorrow.setDate(tomorrow.getDate() + 1);
+        const logs = yield locationlogs_1.default.find({
+            user: userId,
+            timestamp: { $gte: today, $lt: tomorrow }, // ← Today only
+        })
+            .select("location timestamp speed battery") // Only fields needed for map
+            .sort({ timestamp: 1 }) // ← Oldest to newest (perfect for polyline)
+            .lean();
+        res.status(200).json({
+            success: true,
+            data: logs,
+            totalPoints: logs.length,
+            date: today.toISOString().split("T")[0],
+        });
+    }
+    catch (error) {
+        console.error("Today location history error:", error);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+});
+exports.getTodayLocationHistory = getTodayLocationHistory;

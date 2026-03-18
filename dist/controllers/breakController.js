@@ -18,6 +18,13 @@ const punchCheck_1 = require("../utils/punchCheck");
 const startBreak = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     var _a;
     const userId = (_a = req.user) === null || _a === void 0 ? void 0 : _a._id;
+    const { location } = req.body; // ← Expected from mobile app
+    if (!location || !location.lat || !location.lng) {
+        return res.status(400).json({
+            success: false,
+            message: "Location is required to start a break"
+        });
+    }
     // Check if user is punched in
     const punchedIn = yield (0, punchCheck_1.isUserPunchedIn)(userId);
     if (!punchedIn) {
@@ -27,7 +34,6 @@ const startBreak = (req, res) => __awaiter(void 0, void 0, void 0, function* () 
         });
     }
     try {
-        // Check if a break is already active
         const activeBreak = yield break_1.default.findOne({ user: userId, endTime: { $exists: false } });
         if (activeBreak) {
             return res.status(400).json({ success: false, message: "A break is already active" });
@@ -35,6 +41,7 @@ const startBreak = (req, res) => __awaiter(void 0, void 0, void 0, function* () 
         const newBreak = new break_1.default({
             user: userId,
             startTime: new Date(),
+            startLocation: location, // ← Saved
             type: "start",
         });
         yield newBreak.save();
@@ -53,17 +60,21 @@ exports.startBreak = startBreak;
 const endBreak = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     var _a;
     const userId = (_a = req.user) === null || _a === void 0 ? void 0 : _a._id;
+    const { location } = req.body; // ← Optional but recommended
     try {
-        // Find the active break
         const activeBreak = yield break_1.default.findOne({ user: userId, endTime: { $exists: false } });
         if (!activeBreak) {
             return res.status(404).json({ success: false, message: "No active break found to end" });
         }
         const endTime = new Date();
-        const duration = Math.round((endTime.getTime() - new Date(activeBreak.startTime).getTime()) / 60000); // duration in minutes
+        const duration = Math.round((endTime.getTime() - new Date(activeBreak.startTime).getTime()) / 60000);
         activeBreak.endTime = endTime;
         activeBreak.type = "end";
         activeBreak.duration = duration;
+        // ← Save end location if provided
+        if ((location === null || location === void 0 ? void 0 : location.lat) && (location === null || location === void 0 ? void 0 : location.lng)) {
+            activeBreak.endLocation = location;
+        }
         yield activeBreak.save();
         res.status(200).json({
             success: true,
@@ -119,7 +130,9 @@ const getAllBreaks = (req, res) => __awaiter(void 0, void 0, void 0, function* (
                 breakStart: b.startTime,
                 breakEnd: b.endTime || null,
                 duration: (_a = b.duration) !== null && _a !== void 0 ? _a : runningMins,
-                location: "",
+                // ← NEW: Both locations
+                startLocation: b.startLocation || null,
+                endLocation: b.endLocation || null,
                 status,
             };
         });
@@ -146,7 +159,7 @@ const getTodayBreaks = (req, res) => __awaiter(void 0, void 0, void 0, function*
         res.status(200).json({
             success: true,
             data: {
-                breaks,
+                breaks, // ← Now each break has startLocation & endLocation
                 activeBreak,
                 totalBreakMinutes,
                 breaksTaken: breaks.length,

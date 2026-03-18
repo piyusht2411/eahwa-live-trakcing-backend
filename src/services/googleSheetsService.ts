@@ -12,6 +12,7 @@ const ATTENDANCE_HEADERS = [
   "Location",
   "Selfie URL",
   "Type",
+  "Late Punch In",
 ];
 
 const formatDate = (date: Date): string => {
@@ -69,6 +70,29 @@ export const updatePunchSheet = async (punchData: any) => {
     punchData.location?.address ||
     `${punchData.location?.lat}, ${punchData.location?.lng}`;
 
+  // let latePunchIn = "";
+  // if (punchData.type === "in") {
+  //   // Reuse the same logic as virtual (duplicate for sheet consistency)
+  //   const formatter = new Intl.DateTimeFormat('en-US', {
+  //     timeZone: 'Asia/Kolkata',
+  //     hour: '2-digit',
+  //     minute: '2-digit',
+  //     hour12: false,
+  //   });
+
+  //   const parts = formatter.formatToParts(time).reduce((acc: any, part) => {
+  //     if (part.type === 'hour' || part.type === 'minute') {
+  //       acc[part.type] = parseInt(part.value, 10);
+  //     }
+  //     return acc;
+  //   }, {});
+
+  //   const hour = parts.hour;
+  //   const minute = parts.minute;
+
+  //   latePunchIn = (hour > 10) || (hour === 10 && minute > 15) ? "Yes" : "No";
+  // }
+
   await sheet.addRow({
     "Employee Name": punchData.employeeName,
     "Employee ID": punchData.employeeId,
@@ -79,5 +103,8 @@ export const updatePunchSheet = async (punchData: any) => {
     "Location": address,
     "Selfie URL": punchData.selfie || "N/A",
     "Type": punchData.type,
+    "Late Punch In": punchData.type === "in" 
+      ? (punchData.isLate ? "Yes" : "No") 
+      : "",
   });
 };
