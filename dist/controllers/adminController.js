@@ -12,13 +12,14 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.autoPunchOut = exports.getInactiveUsers = exports.getEmployeeStats = exports.getLocationHistory = exports.getLiveLocations = exports.getAdminDashboardStats = void 0;
+exports.getEmployeeStock = exports.getEmployeeWeeklyHours = exports.getEmployeePerformance = exports.autoPunchOut = exports.getInactiveUsers = exports.getEmployeeStats = exports.getLocationHistory = exports.getLiveLocations = exports.getAdminDashboardStats = void 0;
 const user_1 = __importDefault(require("../models/user"));
 const punch_1 = __importDefault(require("../models/punch"));
 const locationlogs_1 = __importDefault(require("../models/locationlogs"));
 const alert_1 = __importDefault(require("../models/alert"));
 const performance_1 = __importDefault(require("../models/performance"));
 const task_1 = __importDefault(require("../models/task"));
+const break_1 = __importDefault(require("../models/break"));
 const healper_1 = require("../utils/healper");
 const getAdminDashboardStats = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
@@ -459,3 +460,161 @@ const autoPunchOut = (req, res) => __awaiter(void 0, void 0, void 0, function* (
     }
 });
 exports.autoPunchOut = autoPunchOut;
+// GET /api/admin/employees/:id/performance
+// Returns latest monthly performance metrics shaped for a radar chart
+const getEmployeePerformance = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    var _a, _b, _c, _d, _e, _f, _g, _h;
+    try {
+        const { id } = req.params;
+        const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+        const perf = yield performance_1.default.findOne({
+            user: id,
+            period: "monthly",
+            periodStart: { $gte: monthStart },
+        }).sort({ periodStart: -1 }).lean();
+        if (!perf) {
+            return res.status(200).json({
+                success: true,
+                data: null,
+                message: "No performance data for this month yet",
+            });
+        }
+        const m = perf.metrics || {};
+        res.status(200).json({
+            success: true,
+            data: {
+                score: perf.score,
+                attendance: Math.round(((_a = m.attendance) !== null && _a !== void 0 ? _a : 0) * 100),
+                punctuality: Math.round(((_b = m.punctuality) !== null && _b !== void 0 ? _b : 0) * 100),
+                visits: Math.round(((_c = m.visitCount) !== null && _c !== void 0 ? _c : 0) * 100),
+                productive: Math.round(((_d = m.productiveRatio) !== null && _d !== void 0 ? _d : 0) * 100),
+                distance: Math.round(((_e = m.distance) !== null && _e !== void 0 ? _e : 0) * 100),
+                tasks: Math.round(((_f = m.taskCompletion) !== null && _f !== void 0 ? _f : 0) * 100),
+                breaks: Math.round(((_g = m.breakDiscipline) !== null && _g !== void 0 ? _g : 0) * 100),
+                stock: Math.round(((_h = m.stockConsistency) !== null && _h !== void 0 ? _h : 0) * 100),
+                period: {
+                    start: perf.periodStart,
+                    end: perf.periodEnd,
+                },
+            },
+        });
+    }
+    catch (error) {
+        console.error("Get employee performance error:", error);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+});
+exports.getEmployeePerformance = getEmployeePerformance;
+// GET /api/admin/employees/:id/weekly-hours
+// Returns Mon–Sat hours breakdown: productive, break, idle
+const getEmployeeWeeklyHours = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    const IDLE_GAP_MS = 15 * 60 * 1000; // 15-min gap in location = idle
+    try {
+        const { id } = req.params;
+        // Build Mon–Sat for current week
+        const now = new Date();
+        const dayOfWeek = now.getDay(); // 0=Sun
+        const diffToMon = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+        const monday = new Date(now);
+        monday.setDate(now.getDate() - diffToMon);
+        monday.setHours(0, 0, 0, 0);
+        const days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+        const result = [];
+        for (let i = 0; i < 6; i++) {
+            const dayStart = new Date(monday);
+            dayStart.setDate(monday.getDate() + i);
+            const dayEnd = new Date(dayStart);
+            dayEnd.setHours(23, 59, 59, 999);
+            const [punches, breaks, locationLogs] = yield Promise.all([
+                punch_1.default.find({ user: id, date: { $gte: dayStart, $lte: dayEnd } }).sort({ time: 1 }).lean(),
+                break_1.default.find({ user: id, startTime: { $gte: dayStart, $lte: dayEnd }, endTime: { $ne: null } }).lean(),
+                locationlogs_1.default.find({ user: id, timestamp: { $gte: dayStart, $lte: dayEnd } }).sort({ timestamp: 1 }).lean(),
+            ]);
+            // Total working hours (first punch-in → last punch-out)
+            const firstIn = punches.find(p => p.type === "in");
+            const lastOut = [...punches].reverse().find(p => p.type === "out");
+            let workMs = 0;
+            if (firstIn) {
+                const endMs = lastOut ? new Date(lastOut.time).getTime() : dayEnd.getTime();
+                workMs = endMs - new Date(firstIn.time).getTime();
+            }
+            // Total break hours
+            const breakMs = breaks.reduce((sum, b) => { var _a; return sum + ((_a = b.duration) !== null && _a !== void 0 ? _a : 0) * 60 * 1000; }, 0);
+            // Idle = gaps > 15 min in location logs during work time
+            let idleMs = 0;
+            if (firstIn && locationLogs.length > 1) {
+                for (let j = 1; j < locationLogs.length; j++) {
+                    const gap = new Date(locationLogs[j].timestamp).getTime() - new Date(locationLogs[j - 1].timestamp).getTime();
+                    if (gap > IDLE_GAP_MS)
+                        idleMs += gap;
+                }
+            }
+            const productiveMs = Math.max(0, workMs - breakMs - idleMs);
+            result.push({
+                day: days[i],
+                date: dayStart.toISOString().split("T")[0],
+                productive: parseFloat((productiveMs / 3600000).toFixed(2)),
+                break: parseFloat((breakMs / 3600000).toFixed(2)),
+                idle: parseFloat((idleMs / 3600000).toFixed(2)),
+            });
+        }
+        res.status(200).json({ success: true, data: result });
+    }
+    catch (error) {
+        console.error("Get employee weekly hours error:", error);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+});
+exports.getEmployeeWeeklyHours = getEmployeeWeeklyHours;
+// GET /api/admin/employees/:id/stock?start=YYYY-MM-DD&end=YYYY-MM-DD
+// Returns flattened stock items submitted by a specific user
+const getEmployeeStock = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    try {
+        const { id } = req.params;
+        const { start, end } = req.query;
+        const query = { user: id };
+        if (start && end) {
+            query.date = { $gte: new Date(start), $lte: new Date(end) };
+        }
+        const tasks = yield task_1.default.find(query)
+            .select("stock showroomName date address")
+            .sort({ date: -1 })
+            .lean();
+        const stockItems = [];
+        tasks.forEach((task) => {
+            if (!Array.isArray(task.stock))
+                return;
+            task.stock.forEach((item) => {
+                var _a, _b;
+                if ("model" in item && item.model && (item.quantity || 0) > 0) {
+                    stockItems.push({
+                        taskId: task._id,
+                        showroom: task.showroomName,
+                        address: ((_a = task.address) === null || _a === void 0 ? void 0 : _a.fullAddress) || "",
+                        date: task.date,
+                        itemType: "scooter",
+                        item: item.model + (item.variation ? ` (${item.variation})` : ""),
+                        qty: item.quantity,
+                    });
+                }
+                if ("batteryType" in item && item.batteryType && (item.batteryQuantity || 0) > 0) {
+                    stockItems.push({
+                        taskId: task._id,
+                        showroom: task.showroomName,
+                        address: ((_b = task.address) === null || _b === void 0 ? void 0 : _b.fullAddress) || "",
+                        date: task.date,
+                        itemType: "battery",
+                        item: `${item.batteryType} Battery`,
+                        qty: item.batteryQuantity,
+                    });
+                }
+            });
+        });
+        res.status(200).json({ success: true, data: stockItems, total: stockItems.length });
+    }
+    catch (error) {
+        console.error("Get employee stock error:", error);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+});
+exports.getEmployeeStock = getEmployeeStock;

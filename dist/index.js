@@ -37,11 +37,15 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 var _a;
 Object.defineProperty(exports, "__esModule", { value: true });
 const express_1 = __importDefault(require("express"));
+const http_1 = require("http");
 const dotenv_1 = __importDefault(require("dotenv"));
 const cors_1 = __importDefault(require("cors"));
 const body_parser_1 = __importDefault(require("body-parser"));
 const cookie_parser_1 = __importDefault(require("cookie-parser"));
+const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
+const user_1 = __importDefault(require("./models/user"));
 const db_1 = __importDefault(require("./config/db"));
+const socket_1 = require("./socket");
 const image_1 = __importDefault(require("./routes/image"));
 const auth_1 = __importDefault(require("./routes/auth"));
 const punch_1 = __importDefault(require("./routes/punch"));
@@ -53,7 +57,7 @@ const break_1 = __importDefault(require("./routes/break"));
 const alert_1 = __importDefault(require("./routes/alert"));
 const stats_1 = __importDefault(require("./routes/stats"));
 const admin_1 = __importDefault(require("./routes/admin"));
-const user_1 = __importDefault(require("./routes/user"));
+const user_2 = __importDefault(require("./routes/user"));
 const attendance_1 = __importDefault(require("./routes/attendance"));
 const geofence_1 = __importDefault(require("./routes/geofence"));
 const performance_1 = __importDefault(require("./routes/performance"));
@@ -121,7 +125,7 @@ app.use("/api/heartbeat", heartbeat_1.default);
 app.use("/api/stats", stats_1.default);
 app.use("/api/heatmap", heatmap_1.default);
 app.use("/api/admin", admin_1.default);
-app.use("/api/users", user_1.default);
+app.use("/api/users", user_2.default);
 app.use("/api/attendance", attendance_1.default);
 app.use("/api/geofence", geofence_1.default);
 app.use("/api/performance", performance_1.default);
@@ -131,10 +135,55 @@ app.use((err, req, res, next) => {
 app.get("/", (req, res) => {
     res.send("Welcome to the Server");
 });
+const httpServer = (0, http_1.createServer)(app);
+const io = (0, socket_1.initSocket)(httpServer);
+// Socket.io: JWT auth + room-based live tracking
+io.use((socket, next) => __awaiter(void 0, void 0, void 0, function* () {
+    var _a;
+    try {
+        const token = (_a = socket.handshake.auth) === null || _a === void 0 ? void 0 : _a.token;
+        if (!token)
+            return next(new Error("No token"));
+        const decoded = jsonwebtoken_1.default.verify(token, process.env.JWT_SECRET || "");
+        const user = yield user_1.default.findById(decoded.id).lean();
+        if (!user)
+            return next(new Error("User not found"));
+        socket.user = user;
+        next();
+    }
+    catch (_b) {
+        next(new Error("Invalid token"));
+    }
+}));
+io.on("connection", (socket) => {
+    const user = socket.user;
+    console.log(`Socket connected: ${user.name} (${user.role})`);
+    // Admin/manager/hr joins a room to watch a specific user's live location
+    socket.on("watch:user", (targetUserId) => {
+        var _a;
+        const canWatch = user.role === "admin" ||
+            user.role === "hr" ||
+            (user.role === "manager" &&
+                (user._id.toString() === targetUserId ||
+                    ((_a = user.manages) === null || _a === void 0 ? void 0 : _a.some((m) => m.toString() === targetUserId)))) ||
+            (user.role === "employee" && user._id.toString() === targetUserId);
+        if (!canWatch) {
+            socket.emit("error", { message: "Access denied" });
+            return;
+        }
+        socket.join(`location:${targetUserId}`);
+    });
+    socket.on("unwatch:user", (targetUserId) => {
+        socket.leave(`location:${targetUserId}`);
+    });
+    socket.on("disconnect", () => {
+        console.log(`Socket disconnected: ${user.name}`);
+    });
+});
 const start = () => __awaiter(void 0, void 0, void 0, function* () {
     try {
         yield (0, db_1.default)();
-        app.listen(port, () => console.log(`Server is connected to port : ${port}`));
+        httpServer.listen(port, () => console.log(`Server is connected to port : ${port}`));
     }
     catch (error) {
         console.log(error);

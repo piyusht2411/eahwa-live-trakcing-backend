@@ -29,7 +29,7 @@ const resolveEmployeeName = (userId) => __awaiter(void 0, void 0, void 0, functi
 const logAnomaly = (userId_1, employeeName_1, type_1, description_1, ...args_1) => __awaiter(void 0, [userId_1, employeeName_1, type_1, description_1, ...args_1], void 0, function* (userId, employeeName, type, description, notify = false) {
     yield anomaly_1.default.create({ user: userId, type, description });
     if (notify && process.env.HR_WHATSAPP_TO) {
-        yield (0, notificationService_1.sendAnomalyAlert)(userId, employeeName, type, description);
+        (0, notificationService_1.sendAnomalyAlert)(userId, employeeName, type, description).catch((err) => console.error("Anomaly WhatsApp alert failed:", err.message));
     }
 });
 // ── Speed helper ──────────────────────────────────────────────────────────────

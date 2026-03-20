@@ -273,37 +273,48 @@ const getVisits = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
         const tasks = yield task_1.default.find(query)
             .populate({ path: "user", select: "name managedBy", populate: { path: "managedBy", select: "name" } })
             .lean();
-        // Build per-user per-date distance map from LocationLogs
-        const userDateKeys = new Set();
+        // Group tasks by userId__date, sort each group by time
+        const groupMap = {};
         tasks.forEach((task) => {
             var _a, _b;
             const userId = (_b = (((_a = task.user) === null || _a === void 0 ? void 0 : _a._id) || task.user)) === null || _b === void 0 ? void 0 : _b.toString();
             const dateStr = new Date(task.date).toISOString().split("T")[0];
-            if (userId)
-                userDateKeys.add(`${userId}__${dateStr}`);
+            const key = `${userId}__${dateStr}`;
+            if (!groupMap[key])
+                groupMap[key] = [];
+            groupMap[key].push(task);
         });
-        const distanceMap = {};
-        yield Promise.all(Array.from(userDateKeys).map((key) => __awaiter(void 0, void 0, void 0, function* () {
+        for (const key of Object.keys(groupMap)) {
+            groupMap[key].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
+        }
+        // For each task compute distance traveled using GPS logs from prev task time → this task time
+        const taskDistanceMap = {};
+        yield Promise.all(Object.entries(groupMap).map((_a) => __awaiter(void 0, [_a], void 0, function* ([key, group]) {
             const [userId, dateStr] = key.split("__");
-            const start = new Date(dateStr);
-            start.setHours(0, 0, 0, 0);
-            const end = new Date(dateStr);
-            end.setHours(23, 59, 59, 999);
-            const logs = yield locationlogs_1.default.find({ user: userId, timestamp: { $gte: start, $lte: end } })
-                .sort({ timestamp: 1 })
-                .lean();
-            let total = 0;
-            for (let i = 1; i < logs.length; i++) {
-                total += (0, healper_1.haversineDistance)(logs[i - 1].location.lat, logs[i - 1].location.lng, logs[i].location.lat, logs[i].location.lng);
+            const dayStart = new Date(dateStr);
+            dayStart.setHours(0, 0, 0, 0);
+            for (let i = 0; i < group.length; i++) {
+                const task = group[i];
+                const segStart = i === 0 ? dayStart : new Date(group[i - 1].date);
+                const segEnd = new Date(task.date);
+                const logs = yield locationlogs_1.default.find({
+                    user: userId,
+                    timestamp: { $gte: segStart, $lte: segEnd },
+                })
+                    .sort({ timestamp: 1 })
+                    .lean();
+                let total = 0;
+                for (let j = 1; j < logs.length; j++) {
+                    total += (0, healper_1.haversineDistance)(logs[j - 1].location.lat, logs[j - 1].location.lng, logs[j].location.lat, logs[j].location.lng);
+                }
+                taskDistanceMap[task._id.toString()] = parseFloat(total.toFixed(2));
             }
-            distanceMap[key] = parseFloat(total.toFixed(2));
         })));
         let data = tasks.map((task) => {
             var _a, _b, _c;
             const user = task.user || {};
             const manager = user.managedBy || {};
             const d = new Date(task.date);
-            const userId = (_a = (user._id || task.user)) === null || _a === void 0 ? void 0 : _a.toString();
             const dateStr = d.toISOString().split("T")[0];
             return {
                 _id: task._id,
@@ -312,9 +323,9 @@ const getVisits = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
                 visitDate: dateStr,
                 visitTime: d.toTimeString().slice(0, 5),
                 showroomName: task.showroomName,
-                address: ((_b = task.address) === null || _b === void 0 ? void 0 : _b.fullAddress) || "",
+                address: ((_a = task.address) === null || _a === void 0 ? void 0 : _a.fullAddress) || "",
                 timeSpent: task.duration || 0,
-                distance: distanceMap[`${userId}__${dateStr}`] || 0,
+                distance: (_b = taskDistanceMap[task._id.toString()]) !== null && _b !== void 0 ? _b : 0,
                 stockUpdated: Array.isArray(task.stock) && task.stock.length > 0,
                 totalVehicles: (task.stock || []).reduce((sum, s) => {
                     // only count if it's a scooter item

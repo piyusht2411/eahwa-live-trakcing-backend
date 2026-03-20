@@ -6,6 +6,7 @@ import LocationLog from "../models/locationlogs";
 import Alert from "../models/alert";
 import Performance from "../models/performance";
 import Task from "../models/task";
+import Break from "../models/break";
 import { haversineDistance } from "../utils/healper";
 
 export const getAdminDashboardStats = async (req: AuthRequest, res: Response) => {
@@ -489,6 +490,175 @@ export const autoPunchOut = async (req: AuthRequest, res: Response) => {
         res.status(200).json({ success: true, message: `Auto punched out ${autoPunchedOut} employee(s)`, autoPunchedOut });
     } catch (error) {
         console.error("Auto punch-out error:", error);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+};
+
+// GET /api/admin/employees/:id/performance
+// Returns latest monthly performance metrics shaped for a radar chart
+export const getEmployeePerformance = async (req: AuthRequest, res: Response) => {
+    try {
+        const { id } = req.params;
+
+        const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+        const perf = await Performance.findOne({
+            user: id,
+            period: "monthly",
+            periodStart: { $gte: monthStart },
+        }).sort({ periodStart: -1 }).lean();
+
+        if (!perf) {
+            return res.status(200).json({
+                success: true,
+                data: null,
+                message: "No performance data for this month yet",
+            });
+        }
+
+        const m = perf.metrics || {};
+        res.status(200).json({
+            success: true,
+            data: {
+                score: perf.score,
+                attendance:  Math.round((m.attendance       ?? 0) * 100),
+                punctuality: Math.round((m.punctuality      ?? 0) * 100),
+                visits:      Math.round((m.visitCount       ?? 0) * 100),
+                productive:  Math.round((m.productiveRatio  ?? 0) * 100),
+                distance:    Math.round((m.distance         ?? 0) * 100),
+                tasks:       Math.round((m.taskCompletion   ?? 0) * 100),
+                breaks:      Math.round((m.breakDiscipline  ?? 0) * 100),
+                stock:       Math.round((m.stockConsistency ?? 0) * 100),
+                period: {
+                    start: perf.periodStart,
+                    end:   perf.periodEnd,
+                },
+            },
+        });
+    } catch (error) {
+        console.error("Get employee performance error:", error);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+};
+
+// GET /api/admin/employees/:id/weekly-hours
+// Returns Mon–Sat hours breakdown: productive, break, idle
+export const getEmployeeWeeklyHours = async (req: AuthRequest, res: Response) => {
+    const IDLE_GAP_MS = 15 * 60 * 1000; // 15-min gap in location = idle
+
+    try {
+        const { id } = req.params;
+
+        // Build Mon–Sat for current week
+        const now = new Date();
+        const dayOfWeek = now.getDay(); // 0=Sun
+        const diffToMon = dayOfWeek === 0 ? 6 : dayOfWeek - 1;
+        const monday = new Date(now);
+        monday.setDate(now.getDate() - diffToMon);
+        monday.setHours(0, 0, 0, 0);
+
+        const days = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
+        const result = [];
+
+        for (let i = 0; i < 6; i++) {
+            const dayStart = new Date(monday);
+            dayStart.setDate(monday.getDate() + i);
+            const dayEnd = new Date(dayStart);
+            dayEnd.setHours(23, 59, 59, 999);
+
+            const [punches, breaks, locationLogs] = await Promise.all([
+                Punch.find({ user: id, date: { $gte: dayStart, $lte: dayEnd } }).sort({ time: 1 }).lean(),
+                Break.find({ user: id, startTime: { $gte: dayStart, $lte: dayEnd }, endTime: { $ne: null } }).lean(),
+                LocationLog.find({ user: id, timestamp: { $gte: dayStart, $lte: dayEnd } }).sort({ timestamp: 1 }).lean(),
+            ]);
+
+            // Total working hours (first punch-in → last punch-out)
+            const firstIn  = punches.find(p => p.type === "in");
+            const lastOut  = [...punches].reverse().find(p => p.type === "out");
+            let workMs = 0;
+            if (firstIn) {
+                const endMs = lastOut ? new Date(lastOut.time).getTime() : dayEnd.getTime();
+                workMs = endMs - new Date(firstIn.time).getTime();
+            }
+
+            // Total break hours
+            const breakMs = breaks.reduce((sum, b) => sum + (b.duration ?? 0) * 60 * 1000, 0);
+
+            // Idle = gaps > 15 min in location logs during work time
+            let idleMs = 0;
+            if (firstIn && locationLogs.length > 1) {
+                for (let j = 1; j < locationLogs.length; j++) {
+                    const gap = new Date(locationLogs[j].timestamp).getTime() - new Date(locationLogs[j - 1].timestamp).getTime();
+                    if (gap > IDLE_GAP_MS) idleMs += gap;
+                }
+            }
+
+            const productiveMs = Math.max(0, workMs - breakMs - idleMs);
+
+            result.push({
+                day:        days[i],
+                date:       dayStart.toISOString().split("T")[0],
+                productive: parseFloat((productiveMs / 3_600_000).toFixed(2)),
+                break:      parseFloat((breakMs      / 3_600_000).toFixed(2)),
+                idle:       parseFloat((idleMs       / 3_600_000).toFixed(2)),
+            });
+        }
+
+        res.status(200).json({ success: true, data: result });
+    } catch (error) {
+        console.error("Get employee weekly hours error:", error);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+};
+
+// GET /api/admin/employees/:id/stock?start=YYYY-MM-DD&end=YYYY-MM-DD
+// Returns flattened stock items submitted by a specific user
+export const getEmployeeStock = async (req: AuthRequest, res: Response) => {
+    try {
+        const { id } = req.params;
+        const { start, end } = req.query;
+
+        const query: any = { user: id };
+        if (start && end) {
+            query.date = { $gte: new Date(start as string), $lte: new Date(end as string) };
+        }
+
+        const tasks = await Task.find(query)
+            .select("stock showroomName date address")
+            .sort({ date: -1 })
+            .lean();
+
+        const stockItems: any[] = [];
+        tasks.forEach((task: any) => {
+            if (!Array.isArray(task.stock)) return;
+            task.stock.forEach((item: any) => {
+                if ("model" in item && item.model && (item.quantity || 0) > 0) {
+                    stockItems.push({
+                        taskId:    task._id,
+                        showroom:  task.showroomName,
+                        address:   task.address?.fullAddress || "",
+                        date:      task.date,
+                        itemType:  "scooter",
+                        item:      item.model + (item.variation ? ` (${item.variation})` : ""),
+                        qty:       item.quantity,
+                    });
+                }
+                if ("batteryType" in item && item.batteryType && (item.batteryQuantity || 0) > 0) {
+                    stockItems.push({
+                        taskId:    task._id,
+                        showroom:  task.showroomName,
+                        address:   task.address?.fullAddress || "",
+                        date:      task.date,
+                        itemType:  "battery",
+                        item:      `${item.batteryType} Battery`,
+                        qty:       item.batteryQuantity,
+                    });
+                }
+            });
+        });
+
+        res.status(200).json({ success: true, data: stockItems, total: stockItems.length });
+    } catch (error) {
+        console.error("Get employee stock error:", error);
         res.status(500).json({ success: false, message: "Server error" });
     }
 };

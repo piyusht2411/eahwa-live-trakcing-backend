@@ -1,9 +1,13 @@
 import express, { Request, Response, Application, NextFunction } from "express";
+import { createServer } from "http";
 import dotenv from "dotenv";
 import cors from "cors";
 import bodyParser from "body-parser";
 import cookieParser from "cookie-parser";
+import jwt from "jsonwebtoken";
+import User from "./models/user";
 import connectDB from "./config/db";
+import { initSocket } from "./socket";
 import imageRouter from "./routes/image";
 import authRoutes from "./routes/auth";
 import punchRoutes from "./routes/punch";
@@ -110,10 +114,58 @@ app.get("/", (req: Request, res: Response) => {
   res.send("Welcome to the Server");
 });
 
+const httpServer = createServer(app);
+const io = initSocket(httpServer);
+
+// Socket.io: JWT auth + room-based live tracking
+io.use(async (socket, next) => {
+  try {
+    const token = socket.handshake.auth?.token as string;
+    if (!token) return next(new Error("No token"));
+    const decoded = jwt.verify(token, process.env.JWT_SECRET || "") as any;
+    const user = await User.findById(decoded.id).lean();
+    if (!user) return next(new Error("User not found"));
+    (socket as any).user = user;
+    next();
+  } catch {
+    next(new Error("Invalid token"));
+  }
+});
+
+io.on("connection", (socket) => {
+  const user = (socket as any).user;
+  console.log(`Socket connected: ${user.name} (${user.role})`);
+
+  // Admin/manager/hr joins a room to watch a specific user's live location
+  socket.on("watch:user", (targetUserId: string) => {
+    const canWatch =
+      user.role === "admin" ||
+      user.role === "hr" ||
+      (user.role === "manager" &&
+        (user._id.toString() === targetUserId ||
+          user.manages?.some((m: any) => m.toString() === targetUserId))) ||
+      (user.role === "employee" && user._id.toString() === targetUserId);
+
+    if (!canWatch) {
+      socket.emit("error", { message: "Access denied" });
+      return;
+    }
+    socket.join(`location:${targetUserId}`);
+  });
+
+  socket.on("unwatch:user", (targetUserId: string) => {
+    socket.leave(`location:${targetUserId}`);
+  });
+
+  socket.on("disconnect", () => {
+    console.log(`Socket disconnected: ${user.name}`);
+  });
+});
+
 const start = async () => {
   try {
     await connectDB();
-    app.listen(port, () =>
+    httpServer.listen(port, () =>
       console.log(`Server is connected to port : ${port}`)
     );
   } catch (error) {

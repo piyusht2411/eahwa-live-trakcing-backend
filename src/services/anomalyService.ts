@@ -22,7 +22,9 @@ const logAnomaly = async (
   await Anomaly.create({ user: userId, type, description });
 
   if (notify && process.env.HR_WHATSAPP_TO) {
-    await sendAnomalyAlert(userId, employeeName, type, description);
+    sendAnomalyAlert(userId, employeeName, type, description).catch((err) =>
+      console.error("Anomaly WhatsApp alert failed:", err.message)
+    );
   }
 };
 

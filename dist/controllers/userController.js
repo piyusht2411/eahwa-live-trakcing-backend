@@ -16,6 +16,7 @@ exports.deleteUser = exports.updateUser = exports.getAdminsAndManagers = exports
 const user_1 = __importDefault(require("../models/user"));
 const punch_1 = __importDefault(require("../models/punch"));
 const locationlogs_1 = __importDefault(require("../models/locationlogs"));
+const performance_1 = __importDefault(require("../models/performance"));
 const multer_1 = __importDefault(require("multer"));
 const cloudinary_1 = __importDefault(require("../config/cloudinary"));
 const bcrypt_1 = __importDefault(require("bcrypt"));
@@ -101,7 +102,7 @@ const getAllUsers = (req, res) => __awaiter(void 0, void 0, void 0, function* ()
 exports.getAllUsers = getAllUsers;
 // GET /api/users/:id
 const getUserById = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
-    var _a, _b;
+    var _a, _b, _c;
     try {
         const { id } = req.params;
         const user = yield user_1.default.findById(id).select("-password").populate("managedBy", "name employeeId email").lean();
@@ -109,9 +110,11 @@ const getUserById = (req, res) => __awaiter(void 0, void 0, void 0, function* ()
             return res.status(404).json({ success: false, message: "User not found" });
         }
         const { start, end } = getTodayRange();
-        const [punchesToday, latestLog] = yield Promise.all([
+        const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+        const [punchesToday, latestLog, latestPerf] = yield Promise.all([
             punch_1.default.find({ user: id, date: { $gte: start, $lte: end } }).sort({ time: 1 }).lean(),
             locationlogs_1.default.findOne({ user: id }).sort({ timestamp: -1 }).lean(),
+            performance_1.default.findOne({ user: id, period: "monthly", periodStart: { $gte: monthStart } }).sort({ periodStart: -1 }).lean(),
         ]);
         const firstIn = punchesToday.find(p => p.type === "in");
         const lastOut = [...punchesToday].reverse().find(p => p.type === "out");
@@ -123,7 +126,7 @@ const getUserById = (req, res) => __awaiter(void 0, void 0, void 0, function* ()
             : false;
         res.status(200).json({
             success: true,
-            data: Object.assign(Object.assign({}, user), { isPunchedIn, punchInTime: (_a = firstIn === null || firstIn === void 0 ? void 0 : firstIn.time) !== null && _a !== void 0 ? _a : null, punchOutTime: (_b = lastOut === null || lastOut === void 0 ? void 0 : lastOut.time) !== null && _b !== void 0 ? _b : null, lastLocation: latestLog ? { lat: latestLog.location.lat, lng: latestLog.location.lng, timestamp: latestLog.timestamp } : null, locationSharingActive })
+            data: Object.assign(Object.assign({}, user), { isPunchedIn, punchInTime: (_a = firstIn === null || firstIn === void 0 ? void 0 : firstIn.time) !== null && _a !== void 0 ? _a : null, punchOutTime: (_b = lastOut === null || lastOut === void 0 ? void 0 : lastOut.time) !== null && _b !== void 0 ? _b : null, lastLocation: latestLog ? { lat: latestLog.location.lat, lng: latestLog.location.lng, timestamp: latestLog.timestamp } : null, currentLocation: latestLog ? [latestLog.location.lat, latestLog.location.lng] : null, locationSharingActive, score: (_c = latestPerf === null || latestPerf === void 0 ? void 0 : latestPerf.score) !== null && _c !== void 0 ? _c : null })
         });
     }
     catch (error) {

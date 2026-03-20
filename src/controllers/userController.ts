@@ -3,6 +3,7 @@ import { AuthRequest as Request } from "../types/authRequest";
 import User from "../models/user";
 import Punch from "../models/punch";
 import LocationLog from "../models/locationlogs";
+import Performance from "../models/performance";
 import multer from "multer";
 import cloudinary from "../config/cloudinary";
 import bcrypt from "bcrypt";
@@ -116,9 +117,11 @@ export const getUserById = async (req: Request, res: Response) => {
 
         const { start, end } = getTodayRange();
 
-        const [punchesToday, latestLog] = await Promise.all([
+        const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+        const [punchesToday, latestLog, latestPerf] = await Promise.all([
             Punch.find({ user: id, date: { $gte: start, $lte: end } }).sort({ time: 1 }).lean(),
             LocationLog.findOne({ user: id }).sort({ timestamp: -1 }).lean(),
+            Performance.findOne({ user: id, period: "monthly", periodStart: { $gte: monthStart } }).sort({ periodStart: -1 }).lean(),
         ]);
 
         const firstIn = punchesToday.find(p => p.type === "in");
@@ -139,7 +142,9 @@ export const getUserById = async (req: Request, res: Response) => {
                 punchInTime: firstIn?.time ?? null,
                 punchOutTime: lastOut?.time ?? null,
                 lastLocation: latestLog ? { lat: latestLog.location.lat, lng: latestLog.location.lng, timestamp: latestLog.timestamp } : null,
+                currentLocation: latestLog ? [latestLog.location.lat, latestLog.location.lng] : null,
                 locationSharingActive,
+                score: latestPerf?.score ?? null,
             }
         });
     } catch (error) {
