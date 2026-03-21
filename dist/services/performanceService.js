@@ -27,7 +27,7 @@ const calculateScore = (userId, period, start, end) => __awaiter(void 0, void 0,
     // Simple calculations (expand as needed)
     const attendance = punches.filter(p => p.type === "in").length;
     const visitCount = tasks.length;
-    const distance = calculateDistance(logs); // Implement distance calc
+    const distance = yield calculateDistance(logs); // Implement distance calc
     const productiveTime = calculateProductiveTime(logs, tasks); // Implement classification
     const score = Math.min(100, ((attendance * 10) +
         (visitCount * 5) +
@@ -55,13 +55,10 @@ const calculateScore = (userId, period, start, end) => __awaiter(void 0, void 0,
     return perf;
 });
 exports.calculateScore = calculateScore;
-const calculateDistance = (logs) => {
-    let total = 0;
-    for (let i = 1; i < logs.length; i++) {
-        total += (0, healper_1.haversineDistance)(logs[i - 1].location.lat, logs[i - 1].location.lng, logs[i].location.lat, logs[i].location.lng);
-    }
-    return parseFloat(total.toFixed(2));
-};
+const calculateDistance = (logs) => __awaiter(void 0, void 0, void 0, function* () {
+    const coords = logs.map(l => ({ lat: l.location.lat, lng: l.location.lng }));
+    return (0, healper_1.getRoadDistance)(coords);
+});
 const calculateProductiveTime = (logs, tasks) => {
     // Classify based on tasks (visits), travel between, idle detection
     return 6; // hours

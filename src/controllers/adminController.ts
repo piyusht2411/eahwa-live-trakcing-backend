@@ -7,7 +7,7 @@ import Alert from "../models/alert";
 import Performance from "../models/performance";
 import Task from "../models/task";
 import Break from "../models/break";
-import { haversineDistance } from "../utils/healper";
+import { haversineDistance, getRoadSegmentDistances } from "../utils/healper";
 
 export const getAdminDashboardStats = async (req: AuthRequest, res: Response) => {
     try {
@@ -230,11 +230,15 @@ export const getLocationHistory = async (req: AuthRequest, res: Response) => {
             date: { $gte: startOfDay, $lte: endOfDay }
         }).lean();
 
+        // Pre-compute road-based distances for all consecutive log segments
+        const logCoords = logs.map(l => ({ lat: l.location.lat, lng: l.location.lng }));
+        const segmentDistances = await getRoadSegmentDistances(logCoords);
+
         const route = logs.map((log, i) => {
             let showroomName = "";
             let location = "";
 
-            // Find nearest task within 200m
+            // Find nearest task within 200m (proximity check — keep haversine)
             for (const task of tasks) {
                 if (task.address?.lat && task.address?.lng) {
                     const dist = haversineDistance(log.location.lat, log.location.lng, task.address.lat, task.address.lng);
@@ -246,10 +250,8 @@ export const getLocationHistory = async (req: AuthRequest, res: Response) => {
                 }
             }
 
-            // Distance from previous point (km)
-            const distance = i > 0
-                ? parseFloat(haversineDistance(logs[i - 1].location.lat, logs[i - 1].location.lng, log.location.lat, log.location.lng).toFixed(2))
-                : 0;
+            // Road-based distance from previous point (km)
+            const distance = i > 0 ? parseFloat(segmentDistances[i - 1].toFixed(2)) : 0;
 
             // Time spent: minutes until next log point
             const timeSpent = i < logs.length - 1

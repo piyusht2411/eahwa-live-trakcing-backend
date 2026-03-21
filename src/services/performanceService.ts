@@ -4,7 +4,7 @@ import Task from "../models/task";
 import LocationLog from "../models/locationlogs";
 import Performance from "../models/performance";
 import { IPerformance } from "../types";
-import { haversineDistance } from "../utils/healper";
+import { getRoadDistance } from "../utils/healper";
 
 export const calculateScore = async (userId: string, period: "daily" | "weekly" | "monthly", start: Date, end: Date): Promise<IPerformance> => {
   // Fetch data
@@ -15,7 +15,7 @@ export const calculateScore = async (userId: string, period: "daily" | "weekly" 
   // Simple calculations (expand as needed)
   const attendance = punches.filter(p => p.type === "in").length;
   const visitCount = tasks.length;
-  const distance = calculateDistance(logs); // Implement distance calc
+  const distance = await calculateDistance(logs); // Implement distance calc
   const productiveTime = calculateProductiveTime(logs, tasks); // Implement classification
 
   const score = Math.min(100, (
@@ -47,15 +47,9 @@ export const calculateScore = async (userId: string, period: "daily" | "weekly" 
   return perf;
 };
 
-const calculateDistance = (logs: any[]) => {
-  let total = 0;
-  for (let i = 1; i < logs.length; i++) {
-    total += haversineDistance(
-      logs[i - 1].location.lat, logs[i - 1].location.lng,
-      logs[i].location.lat, logs[i].location.lng
-    );
-  }
-  return parseFloat(total.toFixed(2));
+const calculateDistance = async (logs: any[]): Promise<number> => {
+  const coords = logs.map(l => ({ lat: l.location.lat, lng: l.location.lng }));
+  return getRoadDistance(coords);
 };
 
 const calculateProductiveTime = (logs: any[], tasks: any[]) => {

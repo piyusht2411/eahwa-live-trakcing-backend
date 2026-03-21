@@ -303,11 +303,8 @@ const getVisits = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
                 })
                     .sort({ timestamp: 1 })
                     .lean();
-                let total = 0;
-                for (let j = 1; j < logs.length; j++) {
-                    total += (0, healper_1.haversineDistance)(logs[j - 1].location.lat, logs[j - 1].location.lng, logs[j].location.lat, logs[j].location.lng);
-                }
-                taskDistanceMap[task._id.toString()] = parseFloat(total.toFixed(2));
+                const coords = logs.map((l) => ({ lat: l.location.lat, lng: l.location.lng }));
+                taskDistanceMap[task._id.toString()] = yield (0, healper_1.getRoadDistance)(coords);
             }
         })));
         let data = tasks.map((task) => {

@@ -222,11 +222,14 @@ const getLocationHistory = (req, res) => __awaiter(void 0, void 0, void 0, funct
             user: userId,
             date: { $gte: startOfDay, $lte: endOfDay }
         }).lean();
+        // Pre-compute road-based distances for all consecutive log segments
+        const logCoords = logs.map(l => ({ lat: l.location.lat, lng: l.location.lng }));
+        const segmentDistances = yield (0, healper_1.getRoadSegmentDistances)(logCoords);
         const route = logs.map((log, i) => {
             var _a, _b;
             let showroomName = "";
             let location = "";
-            // Find nearest task within 200m
+            // Find nearest task within 200m (proximity check — keep haversine)
             for (const task of tasks) {
                 if (((_a = task.address) === null || _a === void 0 ? void 0 : _a.lat) && ((_b = task.address) === null || _b === void 0 ? void 0 : _b.lng)) {
                     const dist = (0, healper_1.haversineDistance)(log.location.lat, log.location.lng, task.address.lat, task.address.lng);
@@ -237,10 +240,8 @@ const getLocationHistory = (req, res) => __awaiter(void 0, void 0, void 0, funct
                     }
                 }
             }
-            // Distance from previous point (km)
-            const distance = i > 0
-                ? parseFloat((0, healper_1.haversineDistance)(logs[i - 1].location.lat, logs[i - 1].location.lng, log.location.lat, log.location.lng).toFixed(2))
-                : 0;
+            // Road-based distance from previous point (km)
+            const distance = i > 0 ? parseFloat(segmentDistances[i - 1].toFixed(2)) : 0;
             // Time spent: minutes until next log point
             const timeSpent = i < logs.length - 1
                 ? Math.round((new Date(logs[i + 1].timestamp).getTime() - new Date(log.timestamp).getTime()) / 60000)

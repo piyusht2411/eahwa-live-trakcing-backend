@@ -5,7 +5,7 @@ import Punch from "../models/punch";
 import Task from "../models/task";
 import LocationLog from "../models/locationlogs";
 import { calculateScore } from "../services/performanceService";
-import { haversineDistance } from "../utils/healper";
+import { getRoadDistance } from "../utils/healper";
 
 export const getDashboardStats = async (req: AuthRequest, res: Response) => {
     const userId = req.user?._id;
@@ -46,14 +46,8 @@ export const getDashboardStats = async (req: AuthRequest, res: Response) => {
             timestamp: { $gte: today, $lte: endOfDay }
         }).sort({ timestamp: 1 }).select("location").lean();
 
-        let distanceTraveled = 0;
-        for (let i = 1; i < locationLogs.length; i++) {
-            distanceTraveled += haversineDistance(
-                locationLogs[i - 1].location.lat, locationLogs[i - 1].location.lng,
-                locationLogs[i].location.lat, locationLogs[i].location.lng
-            );
-        }
-        distanceTraveled = parseFloat(distanceTraveled.toFixed(2));
+        const coords = locationLogs.map(l => ({ lat: l.location.lat, lng: l.location.lng }));
+        const distanceTraveled = await getRoadDistance(coords);
 
         // Calculate basic hours worked from punches
         let hoursWorked = 0;

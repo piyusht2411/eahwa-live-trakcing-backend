@@ -51,11 +51,8 @@ const getDashboardStats = (req, res) => __awaiter(void 0, void 0, void 0, functi
             user: userId,
             timestamp: { $gte: today, $lte: endOfDay }
         }).sort({ timestamp: 1 }).select("location").lean();
-        let distanceTraveled = 0;
-        for (let i = 1; i < locationLogs.length; i++) {
-            distanceTraveled += (0, healper_1.haversineDistance)(locationLogs[i - 1].location.lat, locationLogs[i - 1].location.lng, locationLogs[i].location.lat, locationLogs[i].location.lng);
-        }
-        distanceTraveled = parseFloat(distanceTraveled.toFixed(2));
+        const coords = locationLogs.map(l => ({ lat: l.location.lat, lng: l.location.lng }));
+        const distanceTraveled = yield (0, healper_1.getRoadDistance)(coords);
         // Calculate basic hours worked from punches
         let hoursWorked = 0;
         if (punches.length > 0) {

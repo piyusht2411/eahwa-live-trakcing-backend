@@ -5,7 +5,7 @@ import cloudinary from "../config/cloudinary";
 import Task from "../models/task";
 import User from "../models/user";
 import LocationLog from "../models/locationlogs";
-import { haversineDistance } from "../utils/healper";
+import { getRoadDistance } from "../utils/healper";
 import { isUserPunchedIn } from "../utils/punchCheck";
 
 const upload = multer({ storage: multer.memoryStorage() });
@@ -319,14 +319,8 @@ export const getVisits = async (req: any, res: Response) => {
             .sort({ timestamp: 1 })
             .lean();
 
-          let total = 0;
-          for (let j = 1; j < logs.length; j++) {
-            total += haversineDistance(
-              logs[j - 1].location.lat, logs[j - 1].location.lng,
-              logs[j].location.lat,     logs[j].location.lng
-            );
-          }
-          taskDistanceMap[task._id.toString()] = parseFloat(total.toFixed(2));
+          const coords = logs.map((l: any) => ({ lat: l.location.lat, lng: l.location.lng }));
+          taskDistanceMap[task._id.toString()] = await getRoadDistance(coords);
         }
       })
     );
