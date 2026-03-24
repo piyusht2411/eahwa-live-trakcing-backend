@@ -223,7 +223,7 @@ const getLocationHistory = (req, res) => __awaiter(void 0, void 0, void 0, funct
             date: { $gte: startOfDay, $lte: endOfDay }
         }).lean();
         // Pre-compute road-based distances for all consecutive log segments
-        const logCoords = logs.map(l => ({ lat: l.location.lat, lng: l.location.lng }));
+        const logCoords = logs.map(l => ({ lat: l.location.lat, lng: l.location.lng, timestamp: l.timestamp }));
         const segmentDistances = yield (0, healper_1.getRoadSegmentDistances)(logCoords);
         const route = logs.map((log, i) => {
             var _a, _b;

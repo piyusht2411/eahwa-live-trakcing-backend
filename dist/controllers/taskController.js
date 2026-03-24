@@ -303,7 +303,7 @@ const getVisits = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
                 })
                     .sort({ timestamp: 1 })
                     .lean();
-                const coords = logs.map((l) => ({ lat: l.location.lat, lng: l.location.lng }));
+                const coords = logs.map((l) => ({ lat: l.location.lat, lng: l.location.lng, timestamp: l.timestamp }));
                 taskDistanceMap[task._id.toString()] = yield (0, healper_1.getRoadDistance)(coords);
             }
         })));

@@ -56,7 +56,7 @@ const calculateScore = (userId, period, start, end) => __awaiter(void 0, void 0,
 });
 exports.calculateScore = calculateScore;
 const calculateDistance = (logs) => __awaiter(void 0, void 0, void 0, function* () {
-    const coords = logs.map(l => ({ lat: l.location.lat, lng: l.location.lng }));
+    const coords = logs.map(l => ({ lat: l.location.lat, lng: l.location.lng, timestamp: l.timestamp }));
     return (0, healper_1.getRoadDistance)(coords);
 });
 const calculateProductiveTime = (logs, tasks) => {

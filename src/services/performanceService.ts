@@ -48,7 +48,7 @@ export const calculateScore = async (userId: string, period: "daily" | "weekly" 
 };
 
 const calculateDistance = async (logs: any[]): Promise<number> => {
-  const coords = logs.map(l => ({ lat: l.location.lat, lng: l.location.lng }));
+  const coords = logs.map(l => ({ lat: l.location.lat, lng: l.location.lng, timestamp: l.timestamp }));
   return getRoadDistance(coords);
 };
 

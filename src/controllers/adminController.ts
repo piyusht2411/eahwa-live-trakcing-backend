@@ -231,7 +231,7 @@ export const getLocationHistory = async (req: AuthRequest, res: Response) => {
         }).lean();
 
         // Pre-compute road-based distances for all consecutive log segments
-        const logCoords = logs.map(l => ({ lat: l.location.lat, lng: l.location.lng }));
+        const logCoords = logs.map(l => ({ lat: l.location.lat, lng: l.location.lng, timestamp: l.timestamp }));
         const segmentDistances = await getRoadSegmentDistances(logCoords);
 
         const route = logs.map((log, i) => {

@@ -28,8 +28,10 @@ exports.calculateSpeed = calculateSpeed;
 const OSRM_BASE_URL = "https://router.project-osrm.org";
 const OSRM_CHUNK_SIZE = 100; // max waypoints per OSRM request
 /**
- * Get road-based total distance (km) for an ordered array of GPS coordinates.
- * Uses OSRM routing API; falls back to haversine sum if OSRM is unavailable.
+ * Get road-based total distance (km) using OSRM Map Matching API.
+ * Map matching snaps GPS traces to the actual road the user traveled,
+ * unlike routing which invents its own optimal path.
+ * Falls back to haversine sum if OSRM is unavailable.
  */
 const getRoadDistance = (coords) => __awaiter(void 0, void 0, void 0, function* () {
     if (coords.length < 2)
@@ -40,13 +42,13 @@ const getRoadDistance = (coords) => __awaiter(void 0, void 0, void 0, function* 
         const chunk = coords.slice(i, i + OSRM_CHUNK_SIZE);
         if (chunk.length < 2)
             break;
-        totalKm += yield _osrmChunkDistance(chunk);
+        totalKm += yield _osrmMatchDistance(chunk);
     }
     return parseFloat(totalKm.toFixed(2));
 });
 exports.getRoadDistance = getRoadDistance;
 /**
- * Get road-based distance per segment (km) for an ordered array of GPS coordinates.
+ * Get road-based distance per segment (km) using OSRM Map Matching API.
  * Returns an array of length coords.length - 1 where result[i] = road distance from coords[i] to coords[i+1].
  * Falls back to haversine per segment if OSRM is unavailable.
  */
@@ -58,22 +60,42 @@ const getRoadSegmentDistances = (coords) => __awaiter(void 0, void 0, void 0, fu
         const chunk = coords.slice(i, i + OSRM_CHUNK_SIZE);
         if (chunk.length < 2)
             break;
-        const segments = yield _osrmChunkSegments(chunk);
+        const segments = yield _osrmMatchSegments(chunk);
         allSegments.push(...segments);
     }
     return allSegments;
 });
 exports.getRoadSegmentDistances = getRoadSegmentDistances;
-function _osrmChunkDistance(chunk) {
+/**
+ * Use OSRM Map Matching (/match/v1/foot/) to get total distance for a GPS trace chunk.
+ * This snaps the GPS trace to the actual roads the user walked on.
+ */
+function _osrmMatchDistance(chunk) {
     return __awaiter(this, void 0, void 0, function* () {
         const coordStr = chunk.map(c => `${c.lng},${c.lat}`).join(";");
+        // Build timestamps parameter if available
+        const hasTimestamps = chunk.every(c => c.timestamp != null);
+        let queryParams = "overview=false&geometries=polyline";
+        if (hasTimestamps) {
+            const timestamps = chunk.map(c => Math.floor(new Date(c.timestamp).getTime() / 1000)).join(";");
+            queryParams += `&timestamps=${timestamps}`;
+        }
+        // Use generous radius (20m) so GPS inaccuracy doesn't cause points to be dropped
+        const radiuses = chunk.map(() => "20").join(";");
+        queryParams += `&radiuses=${radiuses}`;
         try {
-            const res = yield fetch(`${OSRM_BASE_URL}/route/v1/driving/${coordStr}?overview=false`, {
-                signal: AbortSignal.timeout(5000),
+            const res = yield fetch(`${OSRM_BASE_URL}/match/v1/foot/${coordStr}?${queryParams}`, {
+                signal: AbortSignal.timeout(8000),
             });
             const data = yield res.json();
-            if (data.code === "Ok")
-                return data.routes[0].distance / 1000;
+            if (data.code === "Ok" && data.matchings && data.matchings.length > 0) {
+                // Sum distances across all matched sub-traces (OSRM may split the trace)
+                let totalMeters = 0;
+                for (const matching of data.matchings) {
+                    totalMeters += matching.distance;
+                }
+                return totalMeters / 1000;
+            }
         }
         catch (_) {
             // fall through to haversine fallback
@@ -86,16 +108,42 @@ function _osrmChunkDistance(chunk) {
         return total;
     });
 }
-function _osrmChunkSegments(chunk) {
+/**
+ * Use OSRM Map Matching to get per-segment distances for a GPS trace chunk.
+ * Returns an array of distances (km) for each consecutive pair.
+ */
+function _osrmMatchSegments(chunk) {
     return __awaiter(this, void 0, void 0, function* () {
         const coordStr = chunk.map(c => `${c.lng},${c.lat}`).join(";");
+        // Build timestamps parameter if available
+        const hasTimestamps = chunk.every(c => c.timestamp != null);
+        let queryParams = "overview=false&geometries=polyline";
+        if (hasTimestamps) {
+            const timestamps = chunk.map(c => Math.floor(new Date(c.timestamp).getTime() / 1000)).join(";");
+            queryParams += `&timestamps=${timestamps}`;
+        }
+        const radiuses = chunk.map(() => "20").join(";");
+        queryParams += `&radiuses=${radiuses}`;
         try {
-            const res = yield fetch(`${OSRM_BASE_URL}/route/v1/driving/${coordStr}?overview=false`, {
-                signal: AbortSignal.timeout(5000),
+            const res = yield fetch(`${OSRM_BASE_URL}/match/v1/foot/${coordStr}?${queryParams}`, {
+                signal: AbortSignal.timeout(8000),
             });
             const data = yield res.json();
-            if (data.code === "Ok") {
-                return data.routes[0].legs.map((leg) => leg.distance / 1000);
+            if (data.code === "Ok" && data.matchings && data.matchings.length > 0) {
+                // Collect per-leg distances across all matched sub-traces
+                const segmentDistances = [];
+                for (const matching of data.matchings) {
+                    for (const leg of matching.legs) {
+                        segmentDistances.push(leg.distance / 1000);
+                    }
+                }
+                // OSRM may drop outlier points, so the number of legs may not match chunk.length - 1.
+                // If it matches, return directly; otherwise fall back to haversine.
+                if (segmentDistances.length === chunk.length - 1) {
+                    return segmentDistances;
+                }
+                // If counts differ, we still have a total distance — but can't split per-segment reliably,
+                // so fall through to haversine per segment.
             }
         }
         catch (_) {

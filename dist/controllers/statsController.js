@@ -50,8 +50,8 @@ const getDashboardStats = (req, res) => __awaiter(void 0, void 0, void 0, functi
         const locationLogs = yield locationlogs_1.default.find({
             user: userId,
             timestamp: { $gte: today, $lte: endOfDay }
-        }).sort({ timestamp: 1 }).select("location").lean();
-        const coords = locationLogs.map(l => ({ lat: l.location.lat, lng: l.location.lng }));
+        }).sort({ timestamp: 1 }).select("location timestamp").lean();
+        const coords = locationLogs.map(l => ({ lat: l.location.lat, lng: l.location.lng, timestamp: l.timestamp }));
         const distanceTraveled = yield (0, healper_1.getRoadDistance)(coords);
         // Calculate basic hours worked from punches
         let hoursWorked = 0;

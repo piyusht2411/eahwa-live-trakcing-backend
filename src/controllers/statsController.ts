@@ -44,9 +44,9 @@ export const getDashboardStats = async (req: AuthRequest, res: Response) => {
         const locationLogs = await LocationLog.find({
             user: userId,
             timestamp: { $gte: today, $lte: endOfDay }
-        }).sort({ timestamp: 1 }).select("location").lean();
+        }).sort({ timestamp: 1 }).select("location timestamp").lean();
 
-        const coords = locationLogs.map(l => ({ lat: l.location.lat, lng: l.location.lng }));
+        const coords = locationLogs.map(l => ({ lat: l.location.lat, lng: l.location.lng, timestamp: l.timestamp }));
         const distanceTraveled = await getRoadDistance(coords);
 
         // Calculate basic hours worked from punches

@@ -319,7 +319,7 @@ export const getVisits = async (req: any, res: Response) => {
             .sort({ timestamp: 1 })
             .lean();
 
-          const coords = logs.map((l: any) => ({ lat: l.location.lat, lng: l.location.lng }));
+          const coords = logs.map((l: any) => ({ lat: l.location.lat, lng: l.location.lng, timestamp: l.timestamp }));
           taskDistanceMap[task._id.toString()] = await getRoadDistance(coords);
         }
       })
