@@ -14,15 +14,25 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getUserAttendance = exports.getAttendance = void 0;
 const punch_1 = __importDefault(require("../models/punch"));
+const user_1 = __importDefault(require("../models/user"));
 const mongoose_1 = require("mongoose");
 const getAttendance = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
         const { date, // YYYY-MM-DD (single day)
         year, month, // 1-12
+        userId, // filter by specific user
         page = "1", limit = "20" } = req.query;
         // ====================== Pagination ======================
         const currentPage = Math.max(1, parseInt(page) || 1);
         const pageSize = Math.min(100, Math.max(1, parseInt(limit) || 20)); // max 100 per page
+        // ====================== User Filter ======================
+        const userFilter = {};
+        if (userId && typeof userId === "string") {
+            if (!mongoose_1.Types.ObjectId.isValid(userId)) {
+                return res.status(400).json({ success: false, message: "Invalid userId" });
+            }
+            userFilter.user = new mongoose_1.Types.ObjectId(userId);
+        }
         // ====================== Date Filtering Logic ======================
         let startDate;
         let endDate;
@@ -51,14 +61,14 @@ const getAttendance = (req, res) => __awaiter(void 0, void 0, void 0, function* 
             startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
             endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
         }
-        // ====================== Count Total Records ======================
-        const totalRecords = yield punch_1.default.countDocuments({
-            date: { $gte: startDate, $lte: endDate },
-        });
+        const query = Object.assign(Object.assign({}, userFilter), { date: { $gte: startDate, $lte: endDate } });
+        // ====================== Count Total Records + Fetch Users ======================
+        const [totalRecords, users] = yield Promise.all([
+            punch_1.default.countDocuments(query),
+            user_1.default.find({ isActive: true }, { _id: 1, name: 1, employeeId: 1 }).lean(),
+        ]);
         // ====================== Fetch Paginated & Sorted Data ======================
-        const attendanceRecords = yield punch_1.default.find({
-            date: { $gte: startDate, $lte: endDate },
-        })
+        const attendanceRecords = yield punch_1.default.find(query)
             .populate("user", "name employeeId department")
             .sort({ date: -1, time: -1 }) // ← Latest to oldest
             .skip((currentPage - 1) * pageSize)
@@ -69,6 +79,7 @@ const getAttendance = (req, res) => __awaiter(void 0, void 0, void 0, function* 
         res.status(200).json({
             success: true,
             data: attendanceRecords, // includes isLate, user details, etc.
+            users, // for filter dropdown: [{ _id, name, employeeId }]
             pagination: {
                 totalRecords,
                 totalPages,
@@ -79,6 +90,7 @@ const getAttendance = (req, res) => __awaiter(void 0, void 0, void 0, function* 
             },
             filters: {
                 applied: date ? "day" : year && month ? "month" : year ? "year" : "today",
+                userId: userId || undefined,
                 date: date || undefined,
                 year: year || undefined,
                 month: month || undefined,

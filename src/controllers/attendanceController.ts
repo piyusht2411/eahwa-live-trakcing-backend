@@ -1,6 +1,7 @@
 import { Response } from "express";
 import { AuthRequest as Request } from "../types/authRequest";
 import Punch from "../models/punch";
+import User from "../models/user";
 import { Types } from "mongoose";
 
 export const getAttendance = async (req: Request, res: Response) => {
@@ -9,6 +10,7 @@ export const getAttendance = async (req: Request, res: Response) => {
             date,           // YYYY-MM-DD (single day)
             year,
             month,          // 1-12
+            userId,         // filter by specific user
             page = "1",
             limit = "20"
         } = req.query;
@@ -16,6 +18,15 @@ export const getAttendance = async (req: Request, res: Response) => {
         // ====================== Pagination ======================
         const currentPage = Math.max(1, parseInt(page as string) || 1);
         const pageSize = Math.min(100, Math.max(1, parseInt(limit as string) || 20)); // max 100 per page
+
+        // ====================== User Filter ======================
+        const userFilter: Record<string, any> = {};
+        if (userId && typeof userId === "string") {
+            if (!Types.ObjectId.isValid(userId)) {
+                return res.status(400).json({ success: false, message: "Invalid userId" });
+            }
+            userFilter.user = new Types.ObjectId(userId);
+        }
 
         // ====================== Date Filtering Logic ======================
         let startDate: Date;
@@ -47,15 +58,16 @@ export const getAttendance = async (req: Request, res: Response) => {
             endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
         }
 
-        // ====================== Count Total Records ======================
-        const totalRecords = await Punch.countDocuments({
-            date: { $gte: startDate, $lte: endDate },
-        });
+        const query = { ...userFilter, date: { $gte: startDate, $lte: endDate } };
+
+        // ====================== Count Total Records + Fetch Users ======================
+        const [totalRecords, users] = await Promise.all([
+            Punch.countDocuments(query),
+            User.find({ isActive: true }, { _id: 1, name: 1, employeeId: 1 }).lean(),
+        ]);
 
         // ====================== Fetch Paginated & Sorted Data ======================
-        const attendanceRecords = await Punch.find({
-            date: { $gte: startDate, $lte: endDate },
-        })
+        const attendanceRecords = await Punch.find(query)
             .populate("user", "name employeeId department")
             .sort({ date: -1, time: -1 })           // ← Latest to oldest
             .skip((currentPage - 1) * pageSize)
@@ -68,6 +80,7 @@ export const getAttendance = async (req: Request, res: Response) => {
         res.status(200).json({
             success: true,
             data: attendanceRecords,                 // includes isLate, user details, etc.
+            users,                                   // for filter dropdown: [{ _id, name, employeeId }]
             pagination: {
                 totalRecords,
                 totalPages,
@@ -78,6 +91,7 @@ export const getAttendance = async (req: Request, res: Response) => {
             },
             filters: {
                 applied: date ? "day" : year && month ? "month" : year ? "year" : "today",
+                userId: userId || undefined,
                 date: date || undefined,
                 year: year || undefined,
                 month: month || undefined,
