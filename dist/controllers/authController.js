@@ -24,6 +24,7 @@ exports.register = [
     upload.single("profilePicture"), // ← multer middleware (optional field)
     (req, res) => __awaiter(void 0, void 0, void 0, function* () {
         const { name, email, password, role, department, phone, managerId, aadhaarNumber, address, employeeId, post, homeLat, homeLng, homeAddress } = req.body;
+        console.log(req.body);
         let profilePicture = "";
         try {
             // === Upload profile picture to Cloudinary (if file sent) ===

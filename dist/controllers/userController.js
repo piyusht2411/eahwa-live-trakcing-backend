@@ -12,7 +12,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.deleteUser = exports.updateUser = exports.getAdminsAndManagers = exports.getUserById = exports.getAllUsers = void 0;
+exports.deleteUser = exports.updateUser = exports.getAdminsAndManagers = exports.getUsersHomeLocations = exports.getUserById = exports.getAllUsers = void 0;
 const user_1 = __importDefault(require("../models/user"));
 const punch_1 = __importDefault(require("../models/punch"));
 const locationlogs_1 = __importDefault(require("../models/locationlogs"));
@@ -135,6 +135,49 @@ const getUserById = (req, res) => __awaiter(void 0, void 0, void 0, function* ()
     }
 });
 exports.getUserById = getUserById;
+// GET /api/users/home-locations?roles=employee,manager  OR  ?roles[]=employee&roles[]=manager
+const getUsersHomeLocations = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    try {
+        let roles = [];
+        const rolesParam = req.query.roles;
+        if (Array.isArray(rolesParam)) {
+            // ?roles[]=employee&roles[]=manager
+            roles = rolesParam;
+        }
+        else if (typeof rolesParam === "string") {
+            // ?roles=employee,manager  OR  ?roles=employee
+            roles = rolesParam.split(",").map(r => r.trim()).filter(Boolean);
+        }
+        const validRoles = ["admin", "hr", "manager", "employee"];
+        const filteredRoles = roles.filter(r => validRoles.includes(r));
+        const query = { isActive: true };
+        if (filteredRoles.length > 0) {
+            query.role = { $in: filteredRoles };
+        }
+        const users = yield user_1.default.find(query)
+            .select("name email employeeId role department phone homeLocation")
+            .lean();
+        const data = users.map((u) => {
+            var _a;
+            return ({
+                _id: u._id,
+                name: u.name,
+                email: u.email,
+                employeeId: u.employeeId,
+                role: u.role,
+                department: u.department,
+                phone: u.phone,
+                homeLocation: (_a = u.homeLocation) !== null && _a !== void 0 ? _a : null,
+            });
+        });
+        res.status(200).json({ success: true, data });
+    }
+    catch (error) {
+        console.error("Get users home locations error:", error);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+});
+exports.getUsersHomeLocations = getUsersHomeLocations;
 const getAdminsAndManagers = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
         const users = yield user_1.default.find({
@@ -167,7 +210,7 @@ exports.updateUser = [
         const updateData = Object.assign({}, req.body);
         try {
             const employee = yield user_1.default.findById(id);
-            if (!employee || employee.role !== "employee") {
+            if (!employee) {
                 return res.status(404).json({ message: "Employee not found" });
             }
             // === Upload new profile picture if file is sent ===
@@ -210,18 +253,16 @@ exports.updateUser = [
         }
     }),
 ];
-// ====================== DELETE EMPLOYEE (SOFT DELETE) ======================
+// ====================== DELETE EMPLOYEE (HARD DELETE) ======================
 const deleteUser = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
-        const employee = yield user_1.default.findById(req.params.id);
-        if (!employee || employee.role !== "employee") {
+        const employee = yield user_1.default.findByIdAndDelete(req.params.id);
+        if (!employee) {
             return res.status(404).json({ message: "Employee not found" });
         }
-        // Soft delete (matches the isActive filter used in getAdminsAndManagers)
-        yield user_1.default.findByIdAndUpdate(req.params.id, { isActive: false });
         res.status(200).json({
             success: true,
-            message: "Employee deactivated successfully",
+            message: "Employee deleted successfully",
         });
     }
     catch (error) {

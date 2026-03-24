@@ -18,6 +18,8 @@ export const register = [
       homeLat, homeLng, homeAddress
     } = req.body;
 
+    console.log(req.body);
+
     let profilePicture = "";
 
     try {

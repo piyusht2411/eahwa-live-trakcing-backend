@@ -153,6 +153,50 @@ export const getUserById = async (req: Request, res: Response) => {
     }
 };
 
+// GET /api/users/home-locations?roles=employee,manager  OR  ?roles[]=employee&roles[]=manager
+export const getUsersHomeLocations = async (req: Request, res: Response) => {
+    try {
+        let roles: string[] = [];
+
+        const rolesParam = req.query.roles;
+        if (Array.isArray(rolesParam)) {
+            // ?roles[]=employee&roles[]=manager
+            roles = rolesParam as string[];
+        } else if (typeof rolesParam === "string") {
+            // ?roles=employee,manager  OR  ?roles=employee
+            roles = rolesParam.split(",").map(r => r.trim()).filter(Boolean);
+        }
+
+        const validRoles = ["admin", "hr", "manager", "employee"];
+        const filteredRoles = roles.filter(r => validRoles.includes(r));
+
+        const query: any = { isActive: true };
+        if (filteredRoles.length > 0) {
+            query.role = { $in: filteredRoles };
+        }
+
+        const users = await User.find(query)
+            .select("name email employeeId role department phone homeLocation")
+            .lean();
+
+        const data = users.map((u: any) => ({
+            _id: u._id,
+            name: u.name,
+            email: u.email,
+            employeeId: u.employeeId,
+            role: u.role,
+            department: u.department,
+            phone: u.phone,
+            homeLocation: u.homeLocation ?? null,
+        }));
+
+        res.status(200).json({ success: true, data });
+    } catch (error) {
+        console.error("Get users home locations error:", error);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+};
+
 export const getAdminsAndManagers = async (req: Request, res: Response) => {
   try {
     const users = await User.find({ 
@@ -187,7 +231,7 @@ export const updateUser = [
 
     try {
       const employee = await User.findById(id);
-      if (!employee || employee.role !== "employee") {
+      if (!employee) {
         return res.status(404).json({ message: "Employee not found" });
       }
 
@@ -243,21 +287,18 @@ export const updateUser = [
   },
 ];
 
-// ====================== DELETE EMPLOYEE (SOFT DELETE) ======================
+// ====================== DELETE EMPLOYEE (HARD DELETE) ======================
 export const deleteUser = async (req: Request, res: Response) => {
   try {
-    const employee = await User.findById(req.params.id);
+    const employee = await User.findByIdAndDelete(req.params.id);
 
-    if (!employee || employee.role !== "employee") {
+    if (!employee) {
       return res.status(404).json({ message: "Employee not found" });
     }
 
-    // Soft delete (matches the isActive filter used in getAdminsAndManagers)
-    await User.findByIdAndUpdate(req.params.id, { isActive: false });
-
     res.status(200).json({
       success: true,
-      message: "Employee deactivated successfully",
+      message: "Employee deleted successfully",
     });
   } catch (error) {
     console.error("Delete employee error:", error);

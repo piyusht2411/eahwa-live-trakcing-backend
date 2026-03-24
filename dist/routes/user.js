@@ -6,6 +6,7 @@ const auth_1 = require("../middleware/auth");
 const router = (0, express_1.Router)();
 router.get("/", auth_1.protect, (0, auth_1.authorize)("admin", "hr"), userController_1.getAllUsers);
 router.get("/managers", userController_1.getAdminsAndManagers);
+router.get("/home-locations", auth_1.protect, (0, auth_1.authorize)("admin", "hr", "manager"), userController_1.getUsersHomeLocations);
 router.get("/:id", auth_1.protect, (0, auth_1.authorize)("admin", "hr", "manager"), userController_1.getUserById);
 router.put("/:id", auth_1.protect, (0, auth_1.authorize)("admin", "hr", "manager"), userController_1.updateUser);
 router.delete("/:id", auth_1.protect, userController_1.deleteUser);
