@@ -32,6 +32,14 @@ export const logLocation = async (req: Request, res: Response) => {
     const parsedLocation =
       typeof location === "string" ? JSON.parse(location) : location;
 
+    // Reject unrealistic speed (> 200 km/h = 55.56 m/s)
+    // expo-location sends speed in m/s
+    const MAX_SPEED_MS = 55.56;
+    if (speed != null && speed > MAX_SPEED_MS) {
+      console.warn(`[Location] Rejected: speed ${speed.toFixed(1)} m/s exceeds limit for user ${userId}`);
+      return res.json({ message: "Location rejected: unrealistic speed" });
+    }
+
     const log = new LocationLog({
       user: userId,
       location: parsedLocation,

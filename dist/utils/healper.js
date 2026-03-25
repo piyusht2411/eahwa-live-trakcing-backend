@@ -67,8 +67,8 @@ const getRoadSegmentDistances = (coords) => __awaiter(void 0, void 0, void 0, fu
 });
 exports.getRoadSegmentDistances = getRoadSegmentDistances;
 /**
- * Use OSRM Map Matching (/match/v1/foot/) to get total distance for a GPS trace chunk.
- * This snaps the GPS trace to the actual roads the user walked on.
+ * Use OSRM Map Matching (/match/v1/driving/) to get total distance for a GPS trace chunk.
+ * Falls back to Route API (always succeeds with 2+ points), then haversine as last resort.
  */
 function _osrmMatchDistance(chunk) {
     return __awaiter(this, void 0, void 0, function* () {
@@ -84,7 +84,7 @@ function _osrmMatchDistance(chunk) {
         const radiuses = chunk.map(() => "20").join(";");
         queryParams += `&radiuses=${radiuses}`;
         try {
-            const res = yield fetch(`${OSRM_BASE_URL}/match/v1/foot/${coordStr}?${queryParams}`, {
+            const res = yield fetch(`${OSRM_BASE_URL}/match/v1/driving/${coordStr}?${queryParams}`, {
                 signal: AbortSignal.timeout(8000),
             });
             const data = yield res.json();
@@ -98,9 +98,21 @@ function _osrmMatchDistance(chunk) {
             }
         }
         catch (_) {
+            // fall through to Route API fallback
+        }
+        // Fallback 1: Route API — always returns a road-following path for any 2+ waypoints
+        try {
+            const routeCoordStr = chunk.map(c => `${c.lng},${c.lat}`).join(";");
+            const routeRes = yield fetch(`${OSRM_BASE_URL}/route/v1/driving/${routeCoordStr}?overview=false`, { signal: AbortSignal.timeout(8000) });
+            const routeData = yield routeRes.json();
+            if (routeData.code === "Ok" && routeData.routes && routeData.routes.length > 0) {
+                return routeData.routes[0].distance / 1000;
+            }
+        }
+        catch (_) {
             // fall through to haversine fallback
         }
-        // Fallback: sum haversine distances for the chunk
+        // Fallback 2: straight-line haversine sum (last resort)
         let total = 0;
         for (let j = 1; j < chunk.length; j++) {
             total += (0, exports.haversineDistance)(chunk[j - 1].lat, chunk[j - 1].lng, chunk[j].lat, chunk[j].lng);
@@ -110,6 +122,7 @@ function _osrmMatchDistance(chunk) {
 }
 /**
  * Use OSRM Map Matching to get per-segment distances for a GPS trace chunk.
+ * Falls back to Route API (always succeeds with 2+ points), then haversine as last resort.
  * Returns an array of distances (km) for each consecutive pair.
  */
 function _osrmMatchSegments(chunk) {
@@ -125,7 +138,7 @@ function _osrmMatchSegments(chunk) {
         const radiuses = chunk.map(() => "20").join(";");
         queryParams += `&radiuses=${radiuses}`;
         try {
-            const res = yield fetch(`${OSRM_BASE_URL}/match/v1/foot/${coordStr}?${queryParams}`, {
+            const res = yield fetch(`${OSRM_BASE_URL}/match/v1/driving/${coordStr}?${queryParams}`, {
                 signal: AbortSignal.timeout(8000),
             });
             const data = yield res.json();
@@ -138,18 +151,35 @@ function _osrmMatchSegments(chunk) {
                     }
                 }
                 // OSRM may drop outlier points, so the number of legs may not match chunk.length - 1.
-                // If it matches, return directly; otherwise fall back to haversine.
+                // If it matches, return directly; otherwise fall through to Route API fallback.
                 if (segmentDistances.length === chunk.length - 1) {
                     return segmentDistances;
                 }
-                // If counts differ, we still have a total distance — but can't split per-segment reliably,
-                // so fall through to haversine per segment.
+            }
+        }
+        catch (_) {
+            // fall through to Route API fallback
+        }
+        // Fallback 1: Route API with steps — gives per-leg breakdown for any 2+ waypoints
+        try {
+            const routeCoordStr = chunk.map(c => `${c.lng},${c.lat}`).join(";");
+            const routeRes = yield fetch(`${OSRM_BASE_URL}/route/v1/driving/${routeCoordStr}?overview=false&steps=false`, { signal: AbortSignal.timeout(8000) });
+            const routeData = yield routeRes.json();
+            if (routeData.code === "Ok" && routeData.routes && routeData.routes.length > 0) {
+                const legs = routeData.routes[0].legs;
+                if (legs.length === chunk.length - 1) {
+                    return legs.map((leg) => leg.distance / 1000);
+                }
+                // Leg count mismatch — distribute total distance evenly as best estimate
+                const totalKm = routeData.routes[0].distance / 1000;
+                const perSegment = totalKm / (chunk.length - 1);
+                return Array(chunk.length - 1).fill(perSegment);
             }
         }
         catch (_) {
             // fall through to haversine fallback
         }
-        // Fallback: haversine per segment
+        // Fallback 2: straight-line haversine per segment (last resort)
         return chunk.slice(1).map((c, i) => (0, exports.haversineDistance)(chunk[i].lat, chunk[i].lng, c.lat, c.lng));
     });
 }
