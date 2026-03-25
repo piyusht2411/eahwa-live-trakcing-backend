@@ -17,6 +17,7 @@ const user_1 = __importDefault(require("../models/user"));
 const punch_1 = __importDefault(require("../models/punch"));
 const locationlogs_1 = __importDefault(require("../models/locationlogs"));
 const performance_1 = __importDefault(require("../models/performance"));
+const healper_1 = require("../utils/healper");
 const multer_1 = __importDefault(require("multer"));
 const cloudinary_1 = __importDefault(require("../config/cloudinary"));
 const bcrypt_1 = __importDefault(require("bcrypt"));
@@ -111,11 +112,14 @@ const getUserById = (req, res) => __awaiter(void 0, void 0, void 0, function* ()
         }
         const { start, end } = getTodayRange();
         const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
-        const [punchesToday, latestLog, latestPerf] = yield Promise.all([
+        const [punchesToday, latestLog, latestPerf, todayLocationLogs] = yield Promise.all([
             punch_1.default.find({ user: id, date: { $gte: start, $lte: end } }).sort({ time: 1 }).lean(),
             locationlogs_1.default.findOne({ user: id }).sort({ timestamp: -1 }).lean(),
             performance_1.default.findOne({ user: id, period: "monthly", periodStart: { $gte: monthStart } }).sort({ periodStart: -1 }).lean(),
+            locationlogs_1.default.find({ user: id, timestamp: { $gte: start, $lte: end } }).sort({ timestamp: 1 }).select("location timestamp").lean(),
         ]);
+        const coords = todayLocationLogs.map((l) => ({ lat: l.location.lat, lng: l.location.lng, timestamp: l.timestamp }));
+        const distanceTraveled = yield (0, healper_1.getRoadDistance)(coords);
         const firstIn = punchesToday.find(p => p.type === "in");
         const lastOut = [...punchesToday].reverse().find(p => p.type === "out");
         const lastPunch = punchesToday[punchesToday.length - 1];
@@ -126,7 +130,8 @@ const getUserById = (req, res) => __awaiter(void 0, void 0, void 0, function* ()
             : false;
         res.status(200).json({
             success: true,
-            data: Object.assign(Object.assign({}, user), { isPunchedIn, punchInTime: (_a = firstIn === null || firstIn === void 0 ? void 0 : firstIn.time) !== null && _a !== void 0 ? _a : null, punchOutTime: (_b = lastOut === null || lastOut === void 0 ? void 0 : lastOut.time) !== null && _b !== void 0 ? _b : null, lastLocation: latestLog ? { lat: latestLog.location.lat, lng: latestLog.location.lng, timestamp: latestLog.timestamp } : null, currentLocation: latestLog ? [latestLog.location.lat, latestLog.location.lng] : null, locationSharingActive, score: (_c = latestPerf === null || latestPerf === void 0 ? void 0 : latestPerf.score) !== null && _c !== void 0 ? _c : null })
+            data: Object.assign(Object.assign({}, user), { isPunchedIn, punchInTime: (_a = firstIn === null || firstIn === void 0 ? void 0 : firstIn.time) !== null && _a !== void 0 ? _a : null, punchOutTime: (_b = lastOut === null || lastOut === void 0 ? void 0 : lastOut.time) !== null && _b !== void 0 ? _b : null, lastLocation: latestLog ? { lat: latestLog.location.lat, lng: latestLog.location.lng, timestamp: latestLog.timestamp } : null, currentLocation: latestLog ? [latestLog.location.lat, latestLog.location.lng] : null, locationSharingActive,
+                distanceTraveled, score: (_c = latestPerf === null || latestPerf === void 0 ? void 0 : latestPerf.score) !== null && _c !== void 0 ? _c : null })
         });
     }
     catch (error) {

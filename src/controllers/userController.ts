@@ -4,6 +4,7 @@ import User from "../models/user";
 import Punch from "../models/punch";
 import LocationLog from "../models/locationlogs";
 import Performance from "../models/performance";
+import { getRoadDistance } from "../utils/healper";
 import multer from "multer";
 import cloudinary from "../config/cloudinary";
 import bcrypt from "bcrypt";
@@ -118,11 +119,15 @@ export const getUserById = async (req: Request, res: Response) => {
         const { start, end } = getTodayRange();
 
         const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
-        const [punchesToday, latestLog, latestPerf] = await Promise.all([
+        const [punchesToday, latestLog, latestPerf, todayLocationLogs] = await Promise.all([
             Punch.find({ user: id, date: { $gte: start, $lte: end } }).sort({ time: 1 }).lean(),
             LocationLog.findOne({ user: id }).sort({ timestamp: -1 }).lean(),
             Performance.findOne({ user: id, period: "monthly", periodStart: { $gte: monthStart } }).sort({ periodStart: -1 }).lean(),
+            LocationLog.find({ user: id, timestamp: { $gte: start, $lte: end } }).sort({ timestamp: 1 }).select("location timestamp").lean(),
         ]);
+
+        const coords = todayLocationLogs.map((l: any) => ({ lat: l.location.lat, lng: l.location.lng, timestamp: l.timestamp }));
+        const distanceTraveled = await getRoadDistance(coords);
 
         const firstIn = punchesToday.find(p => p.type === "in");
         const lastOut = [...punchesToday].reverse().find(p => p.type === "out");
@@ -144,6 +149,7 @@ export const getUserById = async (req: Request, res: Response) => {
                 lastLocation: latestLog ? { lat: latestLog.location.lat, lng: latestLog.location.lng, timestamp: latestLog.timestamp } : null,
                 currentLocation: latestLog ? [latestLog.location.lat, latestLog.location.lng] : null,
                 locationSharingActive,
+                distanceTraveled,
                 score: latestPerf?.score ?? null,
             }
         });
