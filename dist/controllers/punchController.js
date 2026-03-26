@@ -29,6 +29,15 @@ exports.punch = [
         const userId = (_a = authReq.user) === null || _a === void 0 ? void 0 : _a._id;
         if (type === "in") {
             yield (0, closeStaleSession_1.closeStaleSession)(userId);
+            // Prevent duplicate punch-in: check if already punched in today with no punch-out after
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const latestPunch = yield punch_1.default.findOne({ user: userId, date: { $gte: today } })
+                .sort({ time: -1 })
+                .lean();
+            if (latestPunch && latestPunch.type === "in") {
+                return res.status(400).json({ message: "Already punched in" });
+            }
         }
         try {
             // Upload selfie

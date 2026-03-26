@@ -51,5 +51,7 @@ punchSchema.pre("save", function (next) {
     this.isLate = (hour > 10) || (hour === 10 && minute > 15);
     next();
 });
+// Compound index for fast today-status queries
+punchSchema.index({ user: 1, date: -1 });
 const Punch = (0, mongoose_1.model)("Punch", punchSchema);
 exports.default = Punch;

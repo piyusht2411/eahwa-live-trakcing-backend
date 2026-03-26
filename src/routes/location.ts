@@ -3,6 +3,7 @@ import { Router, Request, Response, NextFunction } from "express";
 import { logLocation, getLiveTrack, getHeatMap, getTodayLocationHistory, checkHomeIdleUsers } from "../controllers/locationControllers";
 import { protect } from "../middleware/auth";
 import { hierarchyCheck } from "../middleware/auth";
+import rateLimit from "express-rate-limit";
 
 const router = Router();
 
@@ -15,8 +16,17 @@ const cronGuard = (req: Request, res: Response, next: NextFunction) => {
   next();
 };
 
-router.post("/log", protect, logLocation);
-router.post("/home-idle-check", checkHomeIdleUsers);
+// Max 5 location logs per 10 seconds per IP — prevents runaway duplicate spam
+const locationLogLimiter = rateLimit({
+  windowMs: 10_000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { message: "Too many location updates, slow down" },
+});
+
+router.post("/log", protect, locationLogLimiter, logLocation);
+router.post("/home-idle-check", cronGuard, checkHomeIdleUsers); // secured with cronGuard
 router.get("/history/:userId", protect, getTodayLocationHistory);
 router.get("/:userId", protect, hierarchyCheck, getLiveTrack);
 router.get("/heatmap", protect, getHeatMap);

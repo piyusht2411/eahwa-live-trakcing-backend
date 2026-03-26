@@ -86,10 +86,17 @@ export const detectAnomalies = async (userId: string, log: any) => {
     }
   }
 
-  // ── Excessive idle (no new log for 1 hour) ──────────────────────────────────
+  // ── Excessive idle (no new log for 1 hour within today) ────────────────────
+  // Only compare against logs from today. Without the date check, the first log
+  // of every morning would always trigger this (gap from yesterday's last log).
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const todayLogs = recentLogs.filter(
+    (l) => new Date(l.timestamp).getTime() >= today.getTime()
+  );
   if (
-    recentLogs.length > 0 &&
-    Date.now() - new Date(recentLogs[0].timestamp).getTime() > 3_600_000
+    todayLogs.length > 0 &&
+    Date.now() - new Date(todayLogs[0].timestamp).getTime() > 3_600_000
   ) {
     await logAnomaly(
       userId,

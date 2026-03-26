@@ -69,9 +69,14 @@ const detectAnomalies = (userId, log) => __awaiter(void 0, void 0, void 0, funct
             );
         }
     }
-    // ── Excessive idle (no new log for 1 hour) ──────────────────────────────────
-    if (recentLogs.length > 0 &&
-        Date.now() - new Date(recentLogs[0].timestamp).getTime() > 3600000) {
+    // ── Excessive idle (no new log for 1 hour within today) ────────────────────
+    // Only compare against logs from today. Without the date check, the first log
+    // of every morning would always trigger this (gap from yesterday's last log).
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+    const todayLogs = recentLogs.filter((l) => new Date(l.timestamp).getTime() >= today.getTime());
+    if (todayLogs.length > 0 &&
+        Date.now() - new Date(todayLogs[0].timestamp).getTime() > 3600000) {
         yield logAnomaly(userId, employeeName, "excessive_idle", "No movement or location update detected for over 1 hour", true // notify HR
         );
     }

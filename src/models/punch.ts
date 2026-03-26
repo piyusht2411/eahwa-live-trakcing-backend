@@ -59,5 +59,8 @@ punchSchema.pre("save", function (next) {
   next();
 });
 
+// Compound index for fast today-status queries
+punchSchema.index({ user: 1, date: -1 });
+
 const Punch = model<IPunch>("Punch", punchSchema);
 export default Punch;

@@ -34,6 +34,15 @@ const logLocation = (req, res) => __awaiter(void 0, void 0, void 0, function* ()
         if (!latestPunch || latestPunch.type === "out") {
             return res.json({ message: "Not punched in, location not logged" });
         }
+        // Server-side deduplication: skip if a log already exists for this user
+        // within the last 10 seconds (prevents duplicate posts from foreground + BG task)
+        const recentDuplicate = yield locationlogs_1.default.findOne({
+            user: userId,
+            timestamp: { $gte: new Date(Date.now() - 10000) },
+        }).lean();
+        if (recentDuplicate) {
+            return res.json({ message: "Location logged" }); // idempotent — treat as success
+        }
         const parsedLocation = typeof location === "string" ? JSON.parse(location) : location;
         // Reject unrealistic speed (> 200 km/h = 55.56 m/s)
         // expo-location sends speed in m/s

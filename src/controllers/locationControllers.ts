@@ -29,6 +29,16 @@ export const logLocation = async (req: Request, res: Response) => {
       return res.json({ message: "Not punched in, location not logged" });
     }
 
+    // Server-side deduplication: skip if a log already exists for this user
+    // within the last 10 seconds (prevents duplicate posts from foreground + BG task)
+    const recentDuplicate = await LocationLog.findOne({
+      user: userId,
+      timestamp: { $gte: new Date(Date.now() - 10000) },
+    }).lean();
+    if (recentDuplicate) {
+      return res.json({ message: "Location logged" }); // idempotent — treat as success
+    }
+
     const parsedLocation =
       typeof location === "string" ? JSON.parse(location) : location;
 

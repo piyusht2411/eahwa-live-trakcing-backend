@@ -33,8 +33,12 @@ const locationLogSchema = new Schema<ILocationLog>(
   { timestamps: true }
 );
 
-// TTL index to delete after 1 day (86400 seconds)
-locationLogSchema.index({ createdAt: 1 }, { expireAfterSeconds: 86400 });
+// TTL index — configurable via LOCATION_TTL_DAYS env var (default 30 days)
+const ttlSeconds = parseInt(process.env.LOCATION_TTL_DAYS ?? "30") * 86400;
+locationLogSchema.index({ createdAt: 1 }, { expireAfterSeconds: ttlSeconds });
+
+// Compound index for fast history queries (user + timestamp)
+locationLogSchema.index({ user: 1, timestamp: -1 });
 
 const LocationLog = model<ILocationLog>("LocationLog", locationLogSchema);
 

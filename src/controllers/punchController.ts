@@ -19,6 +19,16 @@ export const punch = [
 
     if (type === "in") {
       await closeStaleSession(userId);
+
+      // Prevent duplicate punch-in: check if already punched in today with no punch-out after
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const latestPunch = await Punch.findOne({ user: userId, date: { $gte: today } })
+        .sort({ time: -1 })
+        .lean();
+      if (latestPunch && latestPunch.type === "in") {
+        return res.status(400).json({ message: "Already punched in" });
+      }
     }
 
     try {
