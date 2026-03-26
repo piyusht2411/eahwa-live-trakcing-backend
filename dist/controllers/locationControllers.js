@@ -21,31 +21,243 @@ const anomalyService_1 = require("../services/anomalyService");
 const mongoose_1 = require("mongoose");
 const socket_1 = require("../socket");
 const notificationService_1 = require("../services/notificationService");
+// ─── Road-Snapping Configuration ──────────────────────────────────────────────
+//
+// Set these in your .env file:
+//
+//   SNAP_PROVIDER=google          # "google" | "osrm" | "none"
+//   GOOGLE_ROADS_API_KEY=AIza...  # Required if SNAP_PROVIDER=google
+//   OSRM_BASE_URL=https://...     # Required if SNAP_PROVIDER=osrm (your self-hosted server)
+//                                 # Defaults to public OSRM if not set (not recommended for prod)
+//
+// Cost estimates for Google Roads API:
+//   - $10 per 1,000 requests (each request snaps up to 100 points)
+//   - 50 employees × 1 route fetch/day × 30 days = 1,500 requests/month ≈ $15/month
+//
+// Self-hosted OSRM:
+//   - $10–20/month VPS (2GB RAM is enough for India data)
+//   - Setup: docker run -t -v "${PWD}:/data" ghcr.io/project-osrm/osrm-backend osrm-extract -p /opt/car.lua /data/india-latest.osm.pbf
+//   - See: https://github.com/Project-OSRM/osrm-backend/wiki/Running-OSRM
+const SNAP_PROVIDER = process.env.SNAP_PROVIDER || "none"; // "google" | "osrm" | "none"
+const GOOGLE_ROADS_API_KEY = process.env.GOOGLE_ROADS_API_KEY || "";
+const OSRM_BASE_URL = process.env.OSRM_BASE_URL || "https://router.project-osrm.org";
+// ─── Dedup Configuration ──────────────────────────────────────────────────────
+const DEDUP_WINDOW_MS = 12000; // 12 seconds — prevents foreground + background double-logging
+// ─── Haversine ────────────────────────────────────────────────────────────────
+const haversineKm = (lat1, lng1, lat2, lng2) => {
+    const R = 6371;
+    const dLat = ((lat2 - lat1) * Math.PI) / 180;
+    const dLng = ((lng2 - lng1) * Math.PI) / 180;
+    const a = Math.sin(dLat / 2) ** 2 +
+        Math.cos((lat1 * Math.PI) / 180) *
+            Math.cos((lat2 * Math.PI) / 180) *
+            Math.sin(dLng / 2) ** 2;
+    return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+};
+/**
+ * Google Roads API — Snap to Roads
+ * Docs: https://developers.google.com/maps/documentation/roads/snap
+ * Pricing: $10 per 1,000 requests (up to 100 points each)
+ */
+function snapWithGoogle(points) {
+    return __awaiter(this, void 0, void 0, function* () {
+        var _a;
+        if (!GOOGLE_ROADS_API_KEY) {
+            console.warn("[Snap] Google Roads API key not set — skipping");
+            return { snappedRoute: [], roadDistanceKm: 0 };
+        }
+        try {
+            const CHUNK_SIZE = 100; // Google allows max 100 points per request
+            const allSnapped = [];
+            for (let i = 0; i < points.length; i += CHUNK_SIZE) {
+                const chunk = points.slice(i, i + CHUNK_SIZE);
+                const path = chunk.map((p) => `${p.lat},${p.lng}`).join("|");
+                const url = `https://roads.googleapis.com/v1/snapToRoads?path=${path}&interpolate=true&key=${GOOGLE_ROADS_API_KEY}`;
+                const controller = new AbortController();
+                const timeout = setTimeout(() => controller.abort(), 15000);
+                const res = yield fetch(url, { signal: controller.signal });
+                clearTimeout(timeout);
+                const data = yield res.json();
+                if (data.error) {
+                    console.error("[Snap Google] API error:", data.error.message);
+                    return { snappedRoute: [], roadDistanceKm: 0 };
+                }
+                if (data.snappedPoints) {
+                    for (const sp of data.snappedPoints) {
+                        allSnapped.push({
+                            lat: sp.location.latitude,
+                            lng: sp.location.longitude,
+                        });
+                    }
+                }
+            }
+            // Calculate road distance from snapped points
+            let distKm = 0;
+            for (let i = 1; i < allSnapped.length; i++) {
+                distKm += haversineKm(allSnapped[i - 1].lat, allSnapped[i - 1].lng, allSnapped[i].lat, allSnapped[i].lng);
+            }
+            console.log(`[Snap Google] ${points.length} pts → ${allSnapped.length} snapped, ${distKm.toFixed(2)} km`);
+            return {
+                snappedRoute: allSnapped,
+                roadDistanceKm: Math.round(distKm * 10) / 10,
+            };
+        }
+        catch (err) {
+            console.error("[Snap Google] Failed:", (_a = err === null || err === void 0 ? void 0 : err.message) !== null && _a !== void 0 ? _a : err);
+            return { snappedRoute: [], roadDistanceKm: 0 };
+        }
+    });
+}
+/**
+ * OSRM Match API — HMM-based GPS trace snapping
+ * Works with self-hosted OSRM or the public demo server.
+ * Self-hosted is strongly recommended for production.
+ */
+function snapWithOSRM(points) {
+    return __awaiter(this, void 0, void 0, function* () {
+        var _a, _b, _c;
+        const MAX_PER_REQ = 100;
+        try {
+            // Deduplicate close points before sending
+            const deduped = [points[0]];
+            for (let i = 1; i < points.length; i++) {
+                const prev = deduped[deduped.length - 1];
+                const distM = haversineKm(prev.lat, prev.lng, points[i].lat, points[i].lng) * 1000;
+                if (distM >= 8) {
+                    deduped.push(points[i]);
+                }
+            }
+            if (deduped.length < 2) {
+                return { snappedRoute: [], roadDistanceKm: 0 };
+            }
+            const allCoords = [];
+            let totalDistM = 0;
+            // Chunk with 1-point overlap for continuity
+            for (let i = 0; i < deduped.length; i += MAX_PER_REQ - 1) {
+                const chunk = deduped.slice(i, i + MAX_PER_REQ);
+                if (chunk.length < 2)
+                    break;
+                const coordStr = chunk
+                    .map((p) => `${p.lng.toFixed(5)},${p.lat.toFixed(5)}`)
+                    .join(";");
+                // Try Match API first
+                const controller = new AbortController();
+                const timeout = setTimeout(() => controller.abort(), 10000);
+                try {
+                    let url = `${OSRM_BASE_URL}/match/v1/driving/${coordStr}?overview=full&geometries=geojson&tidy=true`;
+                    // Add timestamps if available (improves matching quality)
+                    if (chunk[0].timestamp) {
+                        const timestamps = chunk
+                            .map((p) => Math.floor(new Date(p.timestamp).getTime() / 1000).toString())
+                            .join(";");
+                        url += `&timestamps=${timestamps}`;
+                    }
+                    const res = yield fetch(url, { signal: controller.signal });
+                    clearTimeout(timeout);
+                    const data = yield res.json();
+                    if (data.code === "Ok" && ((_a = data.matchings) === null || _a === void 0 ? void 0 : _a.length)) {
+                        for (const matching of data.matchings) {
+                            const pts = matching.geometry.coordinates.map(([lng, lat]) => ({ lat, lng }));
+                            allCoords.push(...(allCoords.length === 0 ? pts : pts.slice(1)));
+                            totalDistM += matching.distance || 0;
+                        }
+                        continue; // Success — move to next chunk
+                    }
+                }
+                catch (_d) { }
+                // Fallback: Route API
+                clearTimeout(timeout);
+                const controller2 = new AbortController();
+                const timeout2 = setTimeout(() => controller2.abort(), 10000);
+                try {
+                    const routeUrl = `${OSRM_BASE_URL}/route/v1/driving/${coordStr}?overview=full&geometries=geojson`;
+                    const res = yield fetch(routeUrl, { signal: controller2.signal });
+                    clearTimeout(timeout2);
+                    const data = yield res.json();
+                    if (data.code === "Ok" && ((_b = data.routes) === null || _b === void 0 ? void 0 : _b.length)) {
+                        const route = data.routes[0];
+                        const pts = route.geometry.coordinates.map(([lng, lat]) => ({ lat, lng }));
+                        allCoords.push(...(allCoords.length === 0 ? pts : pts.slice(1)));
+                        totalDistM += route.distance || 0;
+                    }
+                    else {
+                        // Complete failure — add raw points
+                        allCoords.push(...(allCoords.length === 0
+                            ? chunk
+                            : chunk.slice(1)));
+                    }
+                }
+                catch (_e) {
+                    clearTimeout(timeout2);
+                    allCoords.push(...(allCoords.length === 0 ? chunk : chunk.slice(1)));
+                }
+            }
+            // Fallback distance if OSRM returned 0
+            if (totalDistM === 0 && allCoords.length >= 2) {
+                for (let i = 1; i < allCoords.length; i++) {
+                    totalDistM +=
+                        haversineKm(allCoords[i - 1].lat, allCoords[i - 1].lng, allCoords[i].lat, allCoords[i].lng) * 1000;
+                }
+            }
+            console.log(`[Snap OSRM] ${points.length} pts → ${allCoords.length} snapped, ${(totalDistM / 1000).toFixed(2)} km`);
+            return {
+                snappedRoute: allCoords,
+                roadDistanceKm: Math.round((totalDistM / 1000) * 10) / 10,
+            };
+        }
+        catch (err) {
+            console.error("[Snap OSRM] Failed:", (_c = err === null || err === void 0 ? void 0 : err.message) !== null && _c !== void 0 ? _c : err);
+            return { snappedRoute: [], roadDistanceKm: 0 };
+        }
+    });
+}
+/** Snap GPS points to roads using the configured provider. */
+function snapToRoads(points) {
+    return __awaiter(this, void 0, void 0, function* () {
+        if (points.length < 2 || SNAP_PROVIDER === "none") {
+            return { snappedRoute: [], roadDistanceKm: 0 };
+        }
+        switch (SNAP_PROVIDER) {
+            case "google":
+                return snapWithGoogle(points);
+            case "osrm":
+                return snapWithOSRM(points);
+            default:
+                return { snappedRoute: [], roadDistanceKm: 0 };
+        }
+    });
+}
+// ─── Controllers ──────────────────────────────────────────────────────────────
 const logLocation = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     const { location, speed, battery, isOffline, gpsDisabled, internetDisabled, deviceOff, } = req.body;
     const userId = req.user._id;
     try {
-        // Skip logging if user has not punched in today
+        // Check punch status
         const today = new Date();
         today.setHours(0, 0, 0, 0);
-        const latestPunch = yield punch_1.default.findOne({ user: userId, date: { $gte: today } })
+        const latestPunch = yield punch_1.default.findOne({
+            user: userId,
+            date: { $gte: today },
+        })
             .sort({ time: -1 })
             .lean();
         if (!latestPunch || latestPunch.type === "out") {
             return res.json({ message: "Not punched in, location not logged" });
         }
-        // Server-side deduplication: skip if a log already exists for this user
-        // within the last 10 seconds (prevents duplicate posts from foreground + BG task)
+        // ── Server-side deduplication ──
+        // This is the SINGLE source of truth for dedup — more reliable than
+        // client-side AsyncStorage which has race conditions between foreground
+        // and background tasks.
         const recentDuplicate = yield locationlogs_1.default.findOne({
             user: userId,
-            timestamp: { $gte: new Date(Date.now() - 10000) },
+            timestamp: { $gte: new Date(Date.now() - DEDUP_WINDOW_MS) },
         }).lean();
         if (recentDuplicate) {
-            return res.json({ message: "Location logged" }); // idempotent — treat as success
+            // Return 200 (not 429) — idempotent success, no error to retry
+            return res.json({ message: "Location logged" });
         }
         const parsedLocation = typeof location === "string" ? JSON.parse(location) : location;
-        // Reject unrealistic speed (> 200 km/h = 55.56 m/s)
-        // expo-location sends speed in m/s
+        // Reject unrealistic speed
         const MAX_SPEED_MS = 55.56;
         if (speed != null && speed > MAX_SPEED_MS) {
             console.warn(`[Location] Rejected: speed ${speed.toFixed(1)} m/s exceeds limit for user ${userId}`);
@@ -61,8 +273,10 @@ const logLocation = (req, res) => __awaiter(void 0, void 0, void 0, function* ()
         yield log.save();
         yield user_1.default.findByIdAndUpdate(userId, { lastLocationAt: new Date() });
         yield (0, anomalyService_1.detectAnomalies)(userId, log);
-        // Emit real-time location to any watchers
-        (0, socket_1.getIO)().to(`location:${userId}`).emit("location:update", {
+        // Emit real-time location to watchers
+        (0, socket_1.getIO)()
+            .to(`location:${userId}`)
+            .emit("location:update", {
             userId,
             location: parsedLocation,
             speed,
@@ -70,70 +284,6 @@ const logLocation = (req, res) => __awaiter(void 0, void 0, void 0, function* ()
             isOffline,
             timestamp: log.timestamp,
         });
-        // ── Offline duration alert ──────────────────────────────────────────────
-        // if (isOffline) {
-        //   const lastOnlineLog = await LocationLog.findOne({
-        //     user: userId,
-        //     isOffline: false,
-        //   })
-        //     .sort({ timestamp: -1 })
-        //     .lean();
-        //   if (lastOnlineLog) {
-        //     const offlineDurationMs =
-        //       Date.now() - new Date(lastOnlineLog.timestamp).getTime();
-        //     const offlineDurationHours = offlineDurationMs / (1000 * 60 * 60);
-        //     if (offlineDurationHours >= 1) {
-        //       const durationStr = offlineDurationHours.toFixed(2);
-        //       const description = `User offline for ${durationStr} hours`;
-        //       await Alert.create({
-        //         user: userId,
-        //         type: "offline_long",
-        //         description,
-        //       });
-        //       if (process.env.HR_WHATSAPP_TO) {
-        //         // Fetch name for a friendlier template variable
-        //         const user = await User.findById(userId).lean();
-        //         await sendOfflineAlert(
-        //           String(userId),
-        //           user?.name ?? String(userId), // {{1}}
-        //           durationStr                   // {{2}}
-        //         );
-        //       }
-        //     }
-        //   }
-        // }
-        // ── Device / GPS / Internet alerts ─────────────────────────────────────
-        const alertPromises = [];
-        const alertDescriptions = [];
-        // if (gpsDisabled) {
-        //   alertDescriptions.push("GPS disabled on device");
-        //   alertPromises.push(
-        //     Alert.create({ user: userId, type: "gps_disabled", description: "GPS disabled on device" })
-        //   );
-        // }
-        // if (internetDisabled) {
-        //   alertDescriptions.push("Internet disabled on device");
-        //   alertPromises.push(
-        //     Alert.create({ user: userId, type: "internet_disabled", description: "Internet disabled on device" })
-        //   );
-        // }
-        // if (deviceOff) {
-        //   alertDescriptions.push("Device switched off");
-        //   alertPromises.push(
-        //     Alert.create({ user: userId, type: "device_off", description: "Device switched off" })
-        //   );
-        // }
-        // if (alertPromises.length > 0) {
-        //   await Promise.all(alertPromises);
-        //   if (process.env.HR_WHATSAPP_TO) {
-        //     const user = await User.findById(userId).lean();
-        //     await sendDeviceAlert(
-        //       String(userId),
-        //       user?.name ?? String(userId), // {{1}}
-        //       alertDescriptions             // {{2}}
-        //     );
-        //   }
-        // }
         res.json({ message: "Location logged" });
     }
     catch (error) {
@@ -146,7 +296,6 @@ const getLiveTrack = (req, res) => __awaiter(void 0, void 0, void 0, function* (
     const { userId } = req.params;
     const limit = parseInt(req.query.limit) || 100;
     try {
-        // Hierarchy check in middleware
         const logs = yield locationlogs_1.default.find({ user: userId })
             .sort({ timestamp: -1 })
             .limit(limit)
@@ -169,7 +318,6 @@ const getHeatMap = (req, res) => __awaiter(void 0, void 0, void 0, function* () 
                 $lte: new Date(end),
             },
         };
-        // For admin/HR: full map; for manager: only team; for employee: self only
         if (authUser.role === "manager") {
             const team = yield user_1.default.find({ managedBy: authUserId }).select("_id");
             timeQuery.user = { $in: team.map((u) => u._id) };
@@ -197,29 +345,16 @@ const getHeatMap = (req, res) => __awaiter(void 0, void 0, void 0, function* () 
     }
 });
 exports.getHeatMap = getHeatMap;
-// Haversine distance in km between two lat/lng points
-const haversineKm = (lat1, lng1, lat2, lng2) => {
-    const R = 6371;
-    const dLat = ((lat2 - lat1) * Math.PI) / 180;
-    const dLng = ((lng2 - lng1) * Math.PI) / 180;
-    const a = Math.sin(dLat / 2) ** 2 +
-        Math.cos((lat1 * Math.PI) / 180) *
-            Math.cos((lat2 * Math.PI) / 180) *
-            Math.sin(dLng / 2) ** 2;
-    return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
-};
-// Called by cron job (cron-job.org) every 30 min between 9 AM – 1 PM
-// Checks: user punched in 30+ min ago but all location logs still within 100m of home
+// Called by cron job every 30 min between 9 AM – 1 PM
 const checkHomeIdleUsers = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     var _a, _b;
-    const HOME_RADIUS_KM = 0.1; // 100 metres
+    const HOME_RADIUS_KM = 0.1;
     const IDLE_MINUTES = 30;
     try {
         const now = new Date();
         const today = new Date();
         today.setHours(0, 0, 0, 0);
         const cutoff = new Date(now.getTime() - IDLE_MINUTES * 60 * 1000);
-        // Find all punch-ins today that happened at least 30 min ago
         const punchIns = yield punch_1.default.find({
             type: "in",
             date: { $gte: today },
@@ -232,7 +367,6 @@ const checkHomeIdleUsers = (req, res) => __awaiter(void 0, void 0, void 0, funct
             const user = punch.user;
             if (!((_a = user === null || user === void 0 ? void 0 : user.homeLocation) === null || _a === void 0 ? void 0 : _a.lat) || !((_b = user === null || user === void 0 ? void 0 : user.homeLocation) === null || _b === void 0 ? void 0 : _b.lng))
                 continue;
-            // Skip if we already sent this alert today
             const existingAlert = yield alert_1.default.findOne({
                 user: user._id,
                 type: "no_movement",
@@ -240,21 +374,21 @@ const checkHomeIdleUsers = (req, res) => __awaiter(void 0, void 0, void 0, funct
             }).lean();
             if (existingAlert)
                 continue;
-            // Get all location logs since punch-in
             const logs = yield locationlogs_1.default.find({
                 user: user._id,
                 timestamp: { $gte: new Date(punch.time) },
             }).lean();
             if (logs.length === 0)
                 continue;
-            // Check if every log is within 100m of home
             const allAtHome = logs.every((log) => haversineKm(user.homeLocation.lat, user.homeLocation.lng, log.location.lat, log.location.lng) <= HOME_RADIUS_KM);
             if (!allAtHome)
                 continue;
-            // Create alert
             const description = `${user.name} punched in ${IDLE_MINUTES}+ min ago but has not moved from home location`;
-            yield alert_1.default.create({ user: user._id, type: "no_movement", description });
-            // Notify HR (fire-and-forget)
+            yield alert_1.default.create({
+                user: user._id,
+                type: "no_movement",
+                description,
+            });
             if (process.env.HR_WHATSAPP_TO) {
                 (0, notificationService_1.sendAnomalyAlert)(String(user._id), user.name, "no_movement", description).catch((err) => console.error("Home-idle WhatsApp alert failed:", err.message));
             }
@@ -268,30 +402,65 @@ const checkHomeIdleUsers = (req, res) => __awaiter(void 0, void 0, void 0, funct
     }
 });
 exports.checkHomeIdleUsers = checkHomeIdleUsers;
+/**
+ * GET /api/location/history/:userId
+ *
+ * Returns today's location logs + server-side road-snapped route.
+ * The client no longer needs to do any road matching — it just renders
+ * the snappedRoute coords directly on the map.
+ */
 const getTodayLocationHistory = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     const { userId } = req.params;
     try {
-        // Validate ObjectId
         if (!mongoose_1.Types.ObjectId.isValid(userId)) {
-            return res.status(400).json({ success: false, message: "Invalid userId" });
+            return res
+                .status(400)
+                .json({ success: false, message: "Invalid userId" });
         }
-        // Calculate today (00:00:00 to 23:59:59)
         const today = new Date();
         today.setHours(0, 0, 0, 0);
         const tomorrow = new Date(today);
         tomorrow.setDate(tomorrow.getDate() + 1);
         const logs = yield locationlogs_1.default.find({
             user: userId,
-            timestamp: { $gte: today, $lt: tomorrow }, // ← Today only
+            timestamp: { $gte: today, $lt: tomorrow },
         })
-            .select("location timestamp speed battery") // Only fields needed for map
-            .sort({ timestamp: 1 }) // ← Oldest to newest (perfect for polyline)
+            .select("location timestamp speed battery")
+            .sort({ timestamp: 1 })
             .lean();
+        // ── Server-side road snapping ──
+        // Snap the GPS trace to actual roads using the configured provider.
+        // This happens once on the server instead of on every client that views the route.
+        let snappedRoute = [];
+        let roadDistanceKm = 0;
+        if (logs.length >= 2) {
+            const points = logs.map((log) => ({
+                lat: log.location.lat,
+                lng: log.location.lng,
+                timestamp: log.timestamp.toISOString(),
+            }));
+            const result = yield snapToRoads(points);
+            snappedRoute = result.snappedRoute;
+            roadDistanceKm = result.roadDistanceKm;
+        }
+        // Calculate haversine distance as fallback
+        if (roadDistanceKm === 0 && logs.length >= 2) {
+            let km = 0;
+            for (let i = 1; i < logs.length; i++) {
+                const prev = logs[i - 1].location;
+                const curr = logs[i].location;
+                km += haversineKm(prev.lat, prev.lng, curr.lat, curr.lng);
+            }
+            roadDistanceKm = Math.round(km * 10) / 10;
+        }
         res.status(200).json({
             success: true,
             data: logs,
+            snappedRoute,
+            roadDistanceKm,
             totalPoints: logs.length,
             date: today.toISOString().split("T")[0],
+            snapProvider: SNAP_PROVIDER,
         });
     }
     catch (error) {
