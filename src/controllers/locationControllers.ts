@@ -54,8 +54,8 @@ const haversineKm = (
   const a =
     Math.sin(dLat / 2) ** 2 +
     Math.cos((lat1 * Math.PI) / 180) *
-      Math.cos((lat2 * Math.PI) / 180) *
-      Math.sin(dLng / 2) ** 2;
+    Math.cos((lat2 * Math.PI) / 180) *
+    Math.sin(dLng / 2) ** 2;
   return 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
 };
 
@@ -207,7 +207,7 @@ async function snapWithOSRM(
           }
           continue; // Success — move to next chunk
         }
-      } catch {}
+      } catch { }
 
       // Fallback: Route API
       clearTimeout(timeout);
@@ -367,6 +367,81 @@ export const logLocation = async (req: Request, res: Response) => {
         isOffline,
         timestamp: log.timestamp,
       });
+
+    // ── Offline duration alert ──────────────────────────────────────────────
+    if (isOffline) {
+      const lastOnlineLog = await LocationLog.findOne({
+        user: userId,
+        isOffline: false,
+      })
+        .sort({ timestamp: -1 })
+        .lean();
+
+      if (lastOnlineLog) {
+        const offlineDurationMs =
+          Date.now() - new Date(lastOnlineLog.timestamp).getTime();
+        const offlineDurationHours = offlineDurationMs / (1000 * 60 * 60);
+
+        if (offlineDurationHours >= 1) {
+          const durationStr = offlineDurationHours.toFixed(2);
+          const description = `User offline for ${durationStr} hours`;
+
+          await Alert.create({
+            user: userId,
+            type: "offline_long",
+            description,
+          });
+
+          if (process.env.HR_WHATSAPP_TO) {
+            // Fetch name for a friendlier template variable
+            const user = await User.findById(userId).lean();
+            await sendOfflineAlert(
+              String(userId),
+              user?.name ?? String(userId), // {{1}}
+              durationStr                   // {{2}}
+            );
+          }
+        }
+      }
+    }
+
+    // ── Device / GPS / Internet alerts ─────────────────────────────────────
+    const alertPromises: Promise<unknown>[] = [];
+    const alertDescriptions: string[] = [];
+
+    if (gpsDisabled) {
+      alertDescriptions.push("GPS disabled on device");
+      alertPromises.push(
+        Alert.create({ user: userId, type: "gps_disabled", description: "GPS disabled on device" })
+      );
+    }
+
+    if (internetDisabled) {
+      alertDescriptions.push("Internet disabled on device");
+      alertPromises.push(
+        Alert.create({ user: userId, type: "internet_disabled", description: "Internet disabled on device" })
+      );
+    }
+
+    if (deviceOff) {
+      alertDescriptions.push("Device switched off");
+      alertPromises.push(
+        Alert.create({ user: userId, type: "device_off", description: "Device switched off" })
+      );
+    }
+
+    if (alertPromises.length > 0) {
+      await Promise.all(alertPromises);
+
+      if (process.env.HR_WHATSAPP_TO) {
+        const user = await User.findById(userId).lean();
+        await sendDeviceAlert(
+          String(userId),
+          user?.name ?? String(userId), // {{1}}
+          alertDescriptions             // {{2}}
+        );
+      }
+    }
 
     res.json({ message: "Location logged" });
   } catch (error) {

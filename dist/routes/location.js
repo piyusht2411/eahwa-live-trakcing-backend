@@ -27,7 +27,7 @@ const locationLogLimiter = (0, express_rate_limit_1.default)({
     message: { message: "Too many location updates, slow down" },
 });
 router.post("/log", auth_1.protect, locationLogLimiter, locationControllers_1.logLocation);
-router.post("/home-idle-check", cronGuard, locationControllers_1.checkHomeIdleUsers); // secured with cronGuard
+router.get("/home-idle-check", cronGuard, locationControllers_1.checkHomeIdleUsers);
 router.get("/history/:userId", auth_1.protect, locationControllers_1.getTodayLocationHistory);
 router.get("/:userId", auth_1.protect, auth_2.hierarchyCheck, locationControllers_1.getLiveTrack);
 router.get("/heatmap", auth_1.protect, locationControllers_1.getHeatMap);

@@ -26,7 +26,7 @@ const locationLogLimiter = rateLimit({
 });
 
 router.post("/log", protect, locationLogLimiter, logLocation);
-router.post("/home-idle-check", cronGuard, checkHomeIdleUsers); // secured with cronGuard
+router.get("/home-idle-check", cronGuard, checkHomeIdleUsers);
 router.get("/history/:userId", protect, getTodayLocationHistory);
 router.get("/:userId", protect, hierarchyCheck, getLiveTrack);
 router.get("/heatmap", protect, getHeatMap);
