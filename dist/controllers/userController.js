@@ -12,7 +12,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.deleteUser = exports.updateUser = exports.getAdminsAndManagers = exports.getUsersHomeLocations = exports.getUserById = exports.getAllUsers = void 0;
+exports.deleteUser = exports.getUserTravelHistory = exports.updateUser = exports.getAdminsAndManagers = exports.getUsersHomeLocations = exports.getUserById = exports.getAllUsers = void 0;
 const user_1 = __importDefault(require("../models/user"));
 const punch_1 = __importDefault(require("../models/punch"));
 const locationlogs_1 = __importDefault(require("../models/locationlogs"));
@@ -258,6 +258,54 @@ exports.updateUser = [
         }
     }),
 ];
+// GET /api/users/:id/travel-history?page=1&limit=10&from=2025-01-01&to=2025-03-31
+const getUserTravelHistory = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    try {
+        const { id } = req.params;
+        const { from, to, page = "1", limit = "10" } = req.query;
+        const pageNumber = parseInt(page, 10) || 1;
+        const limitNumber = parseInt(limit, 10) || 10;
+        const skip = (pageNumber - 1) * limitNumber;
+        const user = yield user_1.default.findById(id).select("travelHistory").lean();
+        if (!user) {
+            return res.status(404).json({ success: false, message: "User not found" });
+        }
+        let history = user.travelHistory;
+        // Filter by date range if provided
+        if (from || to) {
+            const fromDate = from ? new Date(from) : null;
+            const toDate = to ? new Date(to) : null;
+            if (toDate)
+                toDate.setHours(23, 59, 59, 999);
+            history = history.filter(entry => {
+                const d = new Date(entry.date);
+                if (fromDate && d < fromDate)
+                    return false;
+                if (toDate && d > toDate)
+                    return false;
+                return true;
+            });
+        }
+        // Sort newest first
+        history.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+        const total = history.length;
+        const paginated = history.slice(skip, skip + limitNumber);
+        res.status(200).json({
+            success: true,
+            data: paginated,
+            pagination: {
+                total,
+                page: pageNumber,
+                pages: Math.ceil(total / limitNumber),
+            },
+        });
+    }
+    catch (error) {
+        console.error("Get travel history error:", error);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+});
+exports.getUserTravelHistory = getUserTravelHistory;
 // ====================== DELETE EMPLOYEE (HARD DELETE) ======================
 const deleteUser = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {

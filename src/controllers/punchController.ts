@@ -7,6 +7,8 @@ import User from "../models/user";
 import { updatePunchSheet } from "../services/googleSheetsService";
 import { AuthRequest } from "../types/authRequest";
 import { closeStaleSession } from "../utils/closeStaleSession";
+import LocationLog from "../models/locationlogs";
+import { getRoadDistance } from "../utils/healper";
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -53,6 +55,43 @@ export const punch = [
       });
 
       await punch.save();
+
+      // On punch-out: calculate today's distance and save to user's travelHistory
+      if (type === "out") {
+        try {
+          const today = new Date();
+          today.setHours(0, 0, 0, 0);
+          const endOfDay = new Date();
+          endOfDay.setHours(23, 59, 59, 999);
+
+          const locationLogs = await LocationLog.find({
+            user: userId,
+            timestamp: { $gte: today, $lte: endOfDay },
+          }).sort({ timestamp: 1 }).select("location timestamp").lean();
+
+          const coords = locationLogs.map((l: any) => ({
+            lat: l.location.lat,
+            lng: l.location.lng,
+            timestamp: l.timestamp,
+          }));
+
+          const distanceKm = await getRoadDistance(coords);
+
+          // Upsert today's entry in travelHistory
+          await User.findOneAndUpdate(
+            { _id: userId, "travelHistory.date": today },
+            { $set: { "travelHistory.$.distanceKm": distanceKm } }
+          ).then(async (updated) => {
+            if (!updated) {
+              await User.findByIdAndUpdate(userId, {
+                $push: { travelHistory: { date: today, distanceKm } },
+              });
+            }
+          });
+        } catch (err) {
+          console.error("[Punch Out] Failed to save travel distance:", err);
+        }
+      }
 
       // Fetch manager name if available
       let managerName = "";

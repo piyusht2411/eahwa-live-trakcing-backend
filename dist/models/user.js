@@ -62,6 +62,12 @@ const userSchema = new mongoose_1.Schema({
         type: Date,
         default: null,
     },
+    travelHistory: [
+        {
+            date: { type: Date, required: true },
+            distanceKm: { type: Number, required: true },
+        },
+    ],
     manages: [
         {
             type: mongoose_1.Types.ObjectId,

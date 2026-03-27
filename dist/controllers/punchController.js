@@ -19,6 +19,8 @@ const punch_1 = __importDefault(require("../models/punch"));
 const user_1 = __importDefault(require("../models/user"));
 const googleSheetsService_1 = require("../services/googleSheetsService");
 const closeStaleSession_1 = require("../utils/closeStaleSession");
+const locationlogs_1 = __importDefault(require("../models/locationlogs"));
+const healper_1 = require("../utils/healper");
 const upload = (0, multer_1.default)({ storage: multer_1.default.memoryStorage() });
 exports.punch = [
     upload.single("selfie"),
@@ -58,6 +60,36 @@ exports.punch = [
                 selfie: selfieResult.secure_url,
             });
             yield punch.save();
+            // On punch-out: calculate today's distance and save to user's travelHistory
+            if (type === "out") {
+                try {
+                    const today = new Date();
+                    today.setHours(0, 0, 0, 0);
+                    const endOfDay = new Date();
+                    endOfDay.setHours(23, 59, 59, 999);
+                    const locationLogs = yield locationlogs_1.default.find({
+                        user: userId,
+                        timestamp: { $gte: today, $lte: endOfDay },
+                    }).sort({ timestamp: 1 }).select("location timestamp").lean();
+                    const coords = locationLogs.map((l) => ({
+                        lat: l.location.lat,
+                        lng: l.location.lng,
+                        timestamp: l.timestamp,
+                    }));
+                    const distanceKm = yield (0, healper_1.getRoadDistance)(coords);
+                    // Upsert today's entry in travelHistory
+                    yield user_1.default.findOneAndUpdate({ _id: userId, "travelHistory.date": today }, { $set: { "travelHistory.$.distanceKm": distanceKm } }).then((updated) => __awaiter(void 0, void 0, void 0, function* () {
+                        if (!updated) {
+                            yield user_1.default.findByIdAndUpdate(userId, {
+                                $push: { travelHistory: { date: today, distanceKm } },
+                            });
+                        }
+                    }));
+                }
+                catch (err) {
+                    console.error("[Punch Out] Failed to save travel distance:", err);
+                }
+            }
             // Fetch manager name if available
             let managerName = "";
             if ((_b = authReq.user) === null || _b === void 0 ? void 0 : _b.managedBy) {

@@ -293,6 +293,58 @@ export const updateUser = [
   },
 ];
 
+// GET /api/users/:id/travel-history?page=1&limit=10&from=2025-01-01&to=2025-03-31
+export const getUserTravelHistory = async (req: Request, res: Response) => {
+    try {
+        const { id } = req.params;
+        const { from, to, page = "1", limit = "10" } = req.query;
+
+        const pageNumber = parseInt(page as string, 10) || 1;
+        const limitNumber = parseInt(limit as string, 10) || 10;
+        const skip = (pageNumber - 1) * limitNumber;
+
+        const user = await User.findById(id).select("travelHistory").lean();
+        if (!user) {
+            return res.status(404).json({ success: false, message: "User not found" });
+        }
+
+        let history = (user as any).travelHistory as { date: Date; distanceKm: number }[];
+
+        // Filter by date range if provided
+        if (from || to) {
+            const fromDate = from ? new Date(from as string) : null;
+            const toDate = to ? new Date(to as string) : null;
+            if (toDate) toDate.setHours(23, 59, 59, 999);
+
+            history = history.filter(entry => {
+                const d = new Date(entry.date);
+                if (fromDate && d < fromDate) return false;
+                if (toDate && d > toDate) return false;
+                return true;
+            });
+        }
+
+        // Sort newest first
+        history.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+
+        const total = history.length;
+        const paginated = history.slice(skip, skip + limitNumber);
+
+        res.status(200).json({
+            success: true,
+            data: paginated,
+            pagination: {
+                total,
+                page: pageNumber,
+                pages: Math.ceil(total / limitNumber),
+            },
+        });
+    } catch (error) {
+        console.error("Get travel history error:", error);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+};
+
 // ====================== DELETE EMPLOYEE (HARD DELETE) ======================
 export const deleteUser = async (req: Request, res: Response) => {
   try {
