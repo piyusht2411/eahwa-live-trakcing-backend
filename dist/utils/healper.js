@@ -25,28 +25,90 @@ const calculateSpeed = (log1, log2) => {
     return timeDiff > 0 ? dist / timeDiff : 0; // km/h
 };
 exports.calculateSpeed = calculateSpeed;
-const OSRM_BASE_URL = "https://router.project-osrm.org";
+const SNAP_PROVIDER = process.env.SNAP_PROVIDER || "none"; // "google" | "osrm" | "none"
+const GOOGLE_ROADS_API_KEY = process.env.GOOGLE_ROADS_API_KEY || "";
+const OSRM_BASE_URL = process.env.OSRM_BASE_URL || "https://router.project-osrm.org";
 const OSRM_CHUNK_SIZE = 100; // max waypoints per OSRM request
 /**
- * Get road-based total distance (km) using OSRM Map Matching API.
- * Map matching snaps GPS traces to the actual road the user traveled,
- * unlike routing which invents its own optimal path.
- * Falls back to haversine sum if OSRM is unavailable.
+ * Get road-based total distance (km) using the configured snap provider.
+ * Uses Google Roads API when SNAP_PROVIDER=google, OSRM when SNAP_PROVIDER=osrm,
+ * and haversine fallback otherwise.
  */
 const getRoadDistance = (coords) => __awaiter(void 0, void 0, void 0, function* () {
     if (coords.length < 2)
         return 0;
-    let totalKm = 0;
-    // Process in overlapping chunks so chunk boundaries share an endpoint
-    for (let i = 0; i < coords.length - 1; i += OSRM_CHUNK_SIZE - 1) {
-        const chunk = coords.slice(i, i + OSRM_CHUNK_SIZE);
-        if (chunk.length < 2)
-            break;
-        totalKm += yield _osrmMatchDistance(chunk);
+    if (SNAP_PROVIDER === "google" && GOOGLE_ROADS_API_KEY) {
+        const km = yield _googleRoadDistance(coords);
+        if (km > 0)
+            return parseFloat(km.toFixed(2));
     }
-    return parseFloat(totalKm.toFixed(2));
+    if (SNAP_PROVIDER === "osrm" || SNAP_PROVIDER === "none") {
+        // Try OSRM match only — no Route API fallback (Route API over-counts GPS traces)
+        let totalKm = 0;
+        let osrmOk = true;
+        for (let i = 0; i < coords.length - 1; i += OSRM_CHUNK_SIZE - 1) {
+            const chunk = coords.slice(i, i + OSRM_CHUNK_SIZE);
+            if (chunk.length < 2)
+                break;
+            const km = yield _osrmMatchDistance(chunk);
+            if (km === 0) {
+                osrmOk = false;
+                break;
+            }
+            totalKm += km;
+        }
+        if (osrmOk && totalKm > 0)
+            return parseFloat(totalKm.toFixed(2));
+    }
+    // Fallback: haversine straight-line sum (always accurate for short distances)
+    let total = 0;
+    for (let i = 1; i < coords.length; i++) {
+        total += (0, exports.haversineDistance)(coords[i - 1].lat, coords[i - 1].lng, coords[i].lat, coords[i].lng);
+    }
+    return parseFloat(total.toFixed(2));
 });
 exports.getRoadDistance = getRoadDistance;
+/**
+ * Google Roads API — Snap to Roads, then sum haversine over snapped points.
+ * Returns 0 on failure so caller can fall through to next provider.
+ */
+function _googleRoadDistance(coords) {
+    return __awaiter(this, void 0, void 0, function* () {
+        var _a;
+        if (!GOOGLE_ROADS_API_KEY)
+            return 0;
+        try {
+            const CHUNK_SIZE = 100;
+            const allSnapped = [];
+            for (let i = 0; i < coords.length; i += CHUNK_SIZE) {
+                const chunk = coords.slice(i, i + CHUNK_SIZE);
+                const path = chunk.map(p => `${p.lat},${p.lng}`).join("|");
+                const url = `https://roads.googleapis.com/v1/snapToRoads?path=${path}&interpolate=true&key=${GOOGLE_ROADS_API_KEY}`;
+                const res = yield fetch(url, { signal: AbortSignal.timeout(15000) });
+                const data = yield res.json();
+                if (data.error) {
+                    console.error("[Snap Google] API error:", data.error.message);
+                    return 0;
+                }
+                if (data.snappedPoints) {
+                    for (const sp of data.snappedPoints) {
+                        allSnapped.push({ lat: sp.location.latitude, lng: sp.location.longitude });
+                    }
+                }
+            }
+            let distKm = 0;
+            for (let i = 1; i < allSnapped.length; i++) {
+                distKm += (0, exports.haversineDistance)(allSnapped[i - 1].lat, allSnapped[i - 1].lng, allSnapped[i].lat, allSnapped[i].lng);
+            }
+            console.log(`[Stats Google] ${coords.length} pts → ${allSnapped.length} snapped, ${distKm.toFixed(2)} km`);
+            return Math.round(distKm * 10) / 10;
+        }
+        catch (err) {
+            console.error("[Stats Google] Failed:", (_a = err === null || err === void 0 ? void 0 : err.message) !== null && _a !== void 0 ? _a : err);
+            return 0;
+        }
+    });
+}
 /**
  * Get road-based distance per segment (km) using OSRM Map Matching API.
  * Returns an array of length coords.length - 1 where result[i] = road distance from coords[i] to coords[i+1].
@@ -100,24 +162,9 @@ function _osrmMatchDistance(chunk) {
         catch (_) {
             // fall through to Route API fallback
         }
-        // Fallback 1: Route API — always returns a road-following path for any 2+ waypoints
-        try {
-            const routeCoordStr = chunk.map(c => `${c.lng},${c.lat}`).join(";");
-            const routeRes = yield fetch(`${OSRM_BASE_URL}/route/v1/driving/${routeCoordStr}?overview=false`, { signal: AbortSignal.timeout(8000) });
-            const routeData = yield routeRes.json();
-            if (routeData.code === "Ok" && routeData.routes && routeData.routes.length > 0) {
-                return routeData.routes[0].distance / 1000;
-            }
-        }
-        catch (_) {
-            // fall through to haversine fallback
-        }
-        // Fallback 2: straight-line haversine sum (last resort)
-        let total = 0;
-        for (let j = 1; j < chunk.length; j++) {
-            total += (0, exports.haversineDistance)(chunk[j - 1].lat, chunk[j - 1].lng, chunk[j].lat, chunk[j].lng);
-        }
-        return total;
+        // Return 0 so getRoadDistance can fall back to haversine — do NOT use Route API
+        // (Route API over-counts GPS traces by routing between each point as a stop)
+        return 0;
     });
 }
 /**
