@@ -110,22 +110,72 @@ function _googleRoadDistance(coords) {
     });
 }
 /**
- * Get road-based distance per segment (km) using OSRM Map Matching API.
+ * Get road-based distance per segment (km) using the configured snap provider.
  * Returns an array of length coords.length - 1 where result[i] = road distance from coords[i] to coords[i+1].
- * Falls back to haversine per segment if OSRM is unavailable.
+ * Uses Google Roads API when SNAP_PROVIDER=google, OSRM when osrm, haversine as fallback.
  */
 const getRoadSegmentDistances = (coords) => __awaiter(void 0, void 0, void 0, function* () {
+    var _a, _b;
     if (coords.length < 2)
         return [];
-    const allSegments = [];
-    for (let i = 0; i < coords.length - 1; i += OSRM_CHUNK_SIZE - 1) {
-        const chunk = coords.slice(i, i + OSRM_CHUNK_SIZE);
-        if (chunk.length < 2)
-            break;
-        const segments = yield _osrmMatchSegments(chunk);
-        allSegments.push(...segments);
+    // Google Roads: snap all points using originalIndex to map distances back to original segments
+    if (SNAP_PROVIDER === "google" && GOOGLE_ROADS_API_KEY) {
+        try {
+            const CHUNK_SIZE = 100;
+            // Each entry: snapped lat/lng + which original index it belongs to
+            const allSnapped = [];
+            let chunkOffset = 0;
+            for (let i = 0; i < coords.length; i += CHUNK_SIZE) {
+                const chunk = coords.slice(i, i + CHUNK_SIZE);
+                const path = chunk.map(p => `${p.lat},${p.lng}`).join("|");
+                const url = `https://roads.googleapis.com/v1/snapToRoads?path=${path}&interpolate=true&key=${GOOGLE_ROADS_API_KEY}`;
+                const res = yield fetch(url, { signal: AbortSignal.timeout(15000) });
+                const data = yield res.json();
+                if (data.error)
+                    throw new Error(data.error.message);
+                if (data.snappedPoints) {
+                    for (const sp of data.snappedPoints) {
+                        allSnapped.push({
+                            lat: sp.location.latitude,
+                            lng: sp.location.longitude,
+                            // originalIndex is relative to the chunk — offset to global index
+                            originalIndex: ((_a = sp.originalIndex) !== null && _a !== void 0 ? _a : 0) + chunkOffset,
+                        });
+                    }
+                }
+                chunkOffset += chunk.length;
+            }
+            if (allSnapped.length >= 2) {
+                // Sum haversine distances of snapped sub-points that fall between each pair of original points
+                const segmentDistances = new Array(coords.length - 1).fill(0);
+                for (let i = 1; i < allSnapped.length; i++) {
+                    const prev = allSnapped[i - 1];
+                    const curr = allSnapped[i];
+                    const segIdx = Math.min(prev.originalIndex, coords.length - 2);
+                    segmentDistances[segIdx] += (0, exports.haversineDistance)(prev.lat, prev.lng, curr.lat, curr.lng);
+                }
+                return segmentDistances.map(d => parseFloat(d.toFixed(3)));
+            }
+        }
+        catch (err) {
+            console.error("[SegDist Google] Failed:", (_b = err === null || err === void 0 ? void 0 : err.message) !== null && _b !== void 0 ? _b : err);
+        }
     }
-    return allSegments;
+    // OSRM fallback
+    if (SNAP_PROVIDER === "osrm" || SNAP_PROVIDER === "none") {
+        const allSegments = [];
+        for (let i = 0; i < coords.length - 1; i += OSRM_CHUNK_SIZE - 1) {
+            const chunk = coords.slice(i, i + OSRM_CHUNK_SIZE);
+            if (chunk.length < 2)
+                break;
+            const segments = yield _osrmMatchSegments(chunk);
+            allSegments.push(...segments);
+        }
+        if (allSegments.length === coords.length - 1)
+            return allSegments;
+    }
+    // Haversine fallback
+    return coords.slice(1).map((c, i) => parseFloat((0, exports.haversineDistance)(coords[i].lat, coords[i].lng, c.lat, c.lng).toFixed(3)));
 });
 exports.getRoadSegmentDistances = getRoadSegmentDistances;
 /**

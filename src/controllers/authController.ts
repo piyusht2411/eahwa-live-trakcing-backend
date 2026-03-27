@@ -12,10 +12,10 @@ const upload = multer({ storage: multer.memoryStorage() });
 export const register = [
   upload.single("profilePicture"),   // ← multer middleware (optional field)
   async (req: Request, res: Response) => {
-    const { 
-      name, email, password, role, department, phone, 
+    const {
+      name, email, password, role, department, phone,
       managerId, aadhaarNumber, address, employeeId, post,
-      homeLat, homeLng, homeAddress
+      homeLat, homeLng, homeAddress, mapColor
     } = req.body;
 
     console.log(req.body);
@@ -70,6 +70,7 @@ export const register = [
         ...(post && { post }),
         ...(managerId && { managedBy: managerId }),
         ...(Object.keys(homeLocation).length > 0 && { homeLocation }),
+        ...(mapColor && { mapColor }),
       });
 
       await user.save();
@@ -121,8 +122,27 @@ export const login = async (req: Request, res: Response) => {
       return res.status(401).json({ message: "Invalid credentials" });
     }
 
+    let needsSave = false;
+
     if (fcmToken && typeof fcmToken === "string" && fcmToken.length > 10 && fcmToken.length < 200) {
       user.fcmToken = fcmToken;
+      needsSave = true;
+    }
+
+    if (!user.mapColor) {
+      const MAP_COLORS = [
+        "#E63946", "#2196F3", "#4CAF50", "#FF9800", "#9C27B0",
+        "#00BCD4", "#F44336", "#3F51B5", "#8BC34A", "#FF5722",
+        "#607D8B", "#E91E63", "#009688", "#FFC107", "#673AB7",
+        "#03A9F4", "#CDDC39", "#FF4081", "#00ACC1", "#7B1FA2",
+      ];
+      // Pick based on user creation time to spread colors across users
+      const index = Math.abs(String(user._id).split("").reduce((acc: number, c: string) => acc + c.charCodeAt(0), 0)) % MAP_COLORS.length;
+      user.mapColor = MAP_COLORS[index];
+      needsSave = true;
+    }
+
+    if (needsSave) {
       await user.save({ validateBeforeSave: false });
     }
 
@@ -176,6 +196,7 @@ export const login = async (req: Request, res: Response) => {
         score,
         rank,
         homeLocation: user.homeLocation || null,
+        mapColor: user.mapColor,
       },
     });
   } catch (error) {

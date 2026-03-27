@@ -23,7 +23,7 @@ const upload = (0, multer_1.default)({ storage: multer_1.default.memoryStorage()
 exports.register = [
     upload.single("profilePicture"), // ← multer middleware (optional field)
     (req, res) => __awaiter(void 0, void 0, void 0, function* () {
-        const { name, email, password, role, department, phone, managerId, aadhaarNumber, address, employeeId, post, homeLat, homeLng, homeAddress } = req.body;
+        const { name, email, password, role, department, phone, managerId, aadhaarNumber, address, employeeId, post, homeLat, homeLng, homeAddress, mapColor } = req.body;
         console.log(req.body);
         let profilePicture = "";
         try {
@@ -57,13 +57,13 @@ exports.register = [
             if (homeAddress != null) {
                 homeLocation.address = homeAddress;
             }
-            const user = new user_1.default(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign({ name,
+            const user = new user_1.default(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign({ name,
                 email,
                 password,
                 role,
                 department,
                 phone,
-                profilePicture }, (aadhaarNumber && { aadhaarNumber })), (address && { address })), (employeeId && { employeeId })), (post && { post })), (managerId && { managedBy: managerId })), (Object.keys(homeLocation).length > 0 && { homeLocation })));
+                profilePicture }, (aadhaarNumber && { aadhaarNumber })), (address && { address })), (employeeId && { employeeId })), (post && { post })), (managerId && { managedBy: managerId })), (Object.keys(homeLocation).length > 0 && { homeLocation })), (mapColor && { mapColor })));
             yield user.save();
             // Auto-generate employeeId for employees
             if (role === "employee") {
@@ -108,8 +108,24 @@ const login = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
         if (!user || !(yield bcrypt_1.default.compare(password, user.password))) {
             return res.status(401).json({ message: "Invalid credentials" });
         }
+        let needsSave = false;
         if (fcmToken && typeof fcmToken === "string" && fcmToken.length > 10 && fcmToken.length < 200) {
             user.fcmToken = fcmToken;
+            needsSave = true;
+        }
+        if (!user.mapColor) {
+            const MAP_COLORS = [
+                "#E63946", "#2196F3", "#4CAF50", "#FF9800", "#9C27B0",
+                "#00BCD4", "#F44336", "#3F51B5", "#8BC34A", "#FF5722",
+                "#607D8B", "#E91E63", "#009688", "#FFC107", "#673AB7",
+                "#03A9F4", "#CDDC39", "#FF4081", "#00ACC1", "#7B1FA2",
+            ];
+            // Pick based on user creation time to spread colors across users
+            const index = Math.abs(String(user._id).split("").reduce((acc, c) => acc + c.charCodeAt(0), 0)) % MAP_COLORS.length;
+            user.mapColor = MAP_COLORS[index];
+            needsSave = true;
+        }
+        if (needsSave) {
             yield user.save({ validateBeforeSave: false });
         }
         const token = jsonwebtoken_1.default.sign({ id: user._id }, process.env.JWT_SECRET || "", {
@@ -156,6 +172,7 @@ const login = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
                 score,
                 rank,
                 homeLocation: user.homeLocation || null,
+                mapColor: user.mapColor,
             },
         });
     }

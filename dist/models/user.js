@@ -62,6 +62,10 @@ const userSchema = new mongoose_1.Schema({
         type: Date,
         default: null,
     },
+    mapColor: {
+        type: String,
+        default: null,
+    },
     travelHistory: [
         {
             date: { type: Date, required: true },

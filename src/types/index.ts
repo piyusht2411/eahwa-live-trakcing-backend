@@ -17,6 +17,7 @@ export interface IUser extends Document {
   };
   fcmToken?: string | null;
   lastLocationAt?: Date | null;
+  mapColor?: string;
   travelHistory: { date: Date; distanceKm: number }[];
   manages: Types.ObjectId[];
   managedBy?: Types.ObjectId;

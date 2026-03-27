@@ -164,7 +164,7 @@ export const getLiveLocations = async (req: AuthRequest, res: Response) => {
 
         // Populate user details manually since aggregate doesn't run middleware
         const userIds = liveLocations.map(l => l._id);
-        const users = await User.find({ _id: { $in: userIds } }).select("name employeeId department");
+        const users = await User.find({ _id: { $in: userIds } }).select("name employeeId department mapColor");
 
         const userMap = new Map();
         users.forEach((u: any) => userMap.set(u._id.toString(), u));
@@ -180,8 +180,9 @@ export const getLiveLocations = async (req: AuthRequest, res: Response) => {
                 longitude: loc.location.lng,
                 lastUpdate: loc.timestamp,
                 battery: loc.battery,
-                speed: loc.speed,
-                status: loc.isOffline ? "offline" : "online"
+                speed: loc.speed != null ? parseFloat(loc.speed.toFixed(1)) : null,
+                status: loc.isOffline ? "offline" : "online",
+                mapColor: user?.mapColor || "#2196F3",
             };
         });
 

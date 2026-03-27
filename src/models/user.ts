@@ -54,6 +54,10 @@ const userSchema = new Schema<IUser>(
       type: Date,
       default: null,
     },
+    mapColor: {
+      type: String,
+      default: null,
+    },
     travelHistory: [
       {
         date: { type: Date, required: true },

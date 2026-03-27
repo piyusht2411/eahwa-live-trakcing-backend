@@ -264,7 +264,7 @@ export const updateUser = [
 
       // === Handle managerId → managedBy mapping (same as register) ===
       if (updateData.managerId !== undefined) {
-        updateData.managedBy = updateData.managerId;
+        updateData.managedBy = updateData.managerId || null;
         delete updateData.managerId;
       }
 
