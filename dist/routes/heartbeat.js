@@ -17,11 +17,11 @@ const heartbeatService_1 = require("../services/heartbeatService");
 const router = express_1.default.Router();
 router.get("/check", (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
-        const cronSecret = req.headers["x-cron-secret"];
-        // Optional: if a secret is defined in env, enforce it. Otherwise, allow (for testing).
-        if (process.env.CRON_SECRET && cronSecret !== process.env.CRON_SECRET) {
-            return res.status(401).json({ message: "Unauthorized" });
-        }
+        // const cronSecret = req.headers["x-cron-secret"];
+        // // Optional: if a secret is defined in env, enforce it. Otherwise, allow (for testing).
+        // if (process.env.CRON_SECRET && cronSecret !== process.env.CRON_SECRET) {
+        //   return res.status(401).json({ message: "Unauthorized" });
+        // }
         const result = yield (0, heartbeatService_1.checkHeartbeats)();
         res.status(200).json(result);
     }
