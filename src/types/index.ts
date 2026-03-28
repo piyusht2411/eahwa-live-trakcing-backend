@@ -118,9 +118,7 @@ export interface IAnomaly extends Document {
   type:
   | "repeated_punch"
   | "unrealistic_speed"
-  | "excessive_idle"
-  | "short_visit"
-  | "gps_manipulation";
+  | "excessive_idle";
   description: string;
   timestamp: Date;
   severity: "low" | "medium" | "high";
@@ -157,12 +155,9 @@ export interface IAlert extends Document {
   | "internet_disabled"
   | "device_off"
   | "no_movement"
-  | "suspicious_activity"
   | "offline_long"
-  | "break_exceeded"
   | "late_arrival"
-  | "location_stopped"
-  | "auto_punch_out";
+  | "location_stopped";
   description: string;
   timestamp: Date;
   resolved: boolean;

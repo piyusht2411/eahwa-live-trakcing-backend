@@ -68,7 +68,7 @@ export const detectAnomalies = async (userId: string, log: any) => {
       employeeName,
       "repeated_punch",
       "Punch-in detected from the same location twice",
-      true  // notify HR
+      true
     );
   }
 

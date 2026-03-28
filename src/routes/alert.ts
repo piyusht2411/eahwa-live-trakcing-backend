@@ -5,6 +5,6 @@ import { protect, authorize } from "../middleware/auth";
 const router = Router();
 
 // /api/alerts
-router.get("/", protect, authorize("employee"), getAlerts);
+router.get("/", protect, getAlerts);
 
 export default router;

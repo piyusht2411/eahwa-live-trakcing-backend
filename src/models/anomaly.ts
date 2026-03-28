@@ -15,8 +15,6 @@ const anomalySchema = new Schema<IAnomaly>(
         "repeated_punch",
         "unrealistic_speed",
         "excessive_idle",
-        "short_visit",
-        "gps_manipulation",
       ],
       required: true,
     },
