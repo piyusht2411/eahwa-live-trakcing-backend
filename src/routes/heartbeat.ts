@@ -1,5 +1,5 @@
 import express, { Request, Response } from "express";
-import { checkHeartbeats } from "../services/heartbeatService";
+import { checkHeartbeats, checkLongStationary } from "../services/heartbeatService";
 
 const router = express.Router();
 
@@ -15,6 +15,22 @@ router.get("/check", async (req: Request, res: Response) => {
     res.status(200).json(result);
   } catch (error) {
     res.status(500).json({ message: "Error checking heartbeats" });
+  }
+});
+
+// Fires no_movement alert when employee is sharing location but hasn't moved
+// from the same spot for 60+ minutes. Schedule this cron every 30 minutes.
+router.get("/long-stationary-check", async (req: Request, res: Response) => {
+  try {
+    const cronSecret = req.headers["x-cron-secret"];
+    if (process.env.CRON_SECRET && cronSecret !== process.env.CRON_SECRET) {
+      return res.status(401).json({ message: "Unauthorized" });
+    }
+
+    const result = await checkLongStationary();
+    res.status(200).json(result);
+  } catch (error) {
+    res.status(500).json({ message: "Error checking long stationary" });
   }
 });
 

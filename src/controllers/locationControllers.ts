@@ -335,6 +335,31 @@ export const logLocation = async (req: Request, res: Response) => {
     const parsedLocation =
       typeof location === "string" ? JSON.parse(location) : location;
 
+    // ── Stationary heartbeat dedup ──────────────────────────────────────────
+    // When the user sends a heartbeat from the same spot, refresh lastLocationAt
+    // (keeps location_stopped alert silent) but skip creating a duplicate log
+    // entry (keeps route history clean).
+    const lastLog = await LocationLog.findOne({ user: userId })
+      .sort({ timestamp: -1 })
+      .select("location")
+      .lean();
+
+    if (lastLog) {
+      const distM =
+        haversineKm(
+          (lastLog as any).location.lat,
+          (lastLog as any).location.lng,
+          parsedLocation.lat,
+          parsedLocation.lng
+        ) * 1000;
+
+      if (distM < 10) {
+        await User.findByIdAndUpdate(userId, { lastLocationAt: new Date() });
+        return res.json({ message: "Location logged (stationary heartbeat)" });
+      }
+    }
+    // ───────────────────────────────────────────────────────────────────────
+
     // Reject unrealistic speed
     const MAX_SPEED_MS = 55.56;
     if (speed != null && speed > MAX_SPEED_MS) {

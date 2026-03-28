@@ -29,4 +29,19 @@ router.get("/check", (req, res) => __awaiter(void 0, void 0, void 0, function* (
         res.status(500).json({ message: "Error checking heartbeats" });
     }
 }));
+// Fires no_movement alert when employee is sharing location but hasn't moved
+// from the same spot for 60+ minutes. Schedule this cron every 30 minutes.
+router.get("/long-stationary-check", (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    try {
+        const cronSecret = req.headers["x-cron-secret"];
+        if (process.env.CRON_SECRET && cronSecret !== process.env.CRON_SECRET) {
+            return res.status(401).json({ message: "Unauthorized" });
+        }
+        const result = yield (0, heartbeatService_1.checkLongStationary)();
+        res.status(200).json(result);
+    }
+    catch (error) {
+        res.status(500).json({ message: "Error checking long stationary" });
+    }
+}));
 exports.default = router;
