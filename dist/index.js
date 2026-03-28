@@ -101,7 +101,6 @@ var corsOptions = {
     ],
     credentials: true,
 };
-app.set("trust proxy", 1);
 app.use((0, cors_1.default)(corsOptions));
 app.use(body_parser_1.default.urlencoded({ extended: false }));
 app.use(body_parser_1.default.json());
