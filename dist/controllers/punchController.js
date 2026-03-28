@@ -21,11 +21,13 @@ const googleSheetsService_1 = require("../services/googleSheetsService");
 const closeStaleSession_1 = require("../utils/closeStaleSession");
 const locationlogs_1 = __importDefault(require("../models/locationlogs"));
 const healper_1 = require("../utils/healper");
+const alert_1 = __importDefault(require("../models/alert"));
+const notificationService_1 = require("../services/notificationService");
 const upload = (0, multer_1.default)({ storage: multer_1.default.memoryStorage() });
 exports.punch = [
     upload.single("selfie"),
     (req, res) => __awaiter(void 0, void 0, void 0, function* () {
-        var _a, _b, _c, _d, _e;
+        var _a, _b, _c, _d, _e, _f;
         const { type, date, location } = req.body;
         const authReq = req;
         const userId = (_a = authReq.user) === null || _a === void 0 ? void 0 : _a._id;
@@ -60,6 +62,15 @@ exports.punch = [
                 selfie: selfieResult.secure_url,
             });
             yield punch.save();
+            // Late punch-in alert
+            if (type === "in" && punch.isLate) {
+                const userName = ((_b = authReq.user) === null || _b === void 0 ? void 0 : _b.name) || String(userId);
+                const description = `${userName} punched in late at ${punch.time.toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" })} IST (after 10:15 AM)`;
+                yield alert_1.default.create({ user: userId, type: "late_arrival", description });
+                if (process.env.HR_WHATSAPP_TO) {
+                    (0, notificationService_1.sendAnomalyAlert)(String(userId), userName, "late_arrival", description).catch((err) => console.error("Late punch-in WhatsApp alert failed:", err.message));
+                }
+            }
             // On punch-out: calculate today's distance and save to user's travelHistory
             if (type === "out") {
                 try {
@@ -92,15 +103,15 @@ exports.punch = [
             }
             // Fetch manager name if available
             let managerName = "";
-            if ((_b = authReq.user) === null || _b === void 0 ? void 0 : _b.managedBy) {
+            if ((_c = authReq.user) === null || _c === void 0 ? void 0 : _c.managedBy) {
                 const manager = yield user_1.default.findById(authReq.user.managedBy).select("name");
                 managerName = (manager === null || manager === void 0 ? void 0 : manager.name) || "";
             }
             // Update Google Sheet
             yield (0, googleSheetsService_1.updatePunchSheet)({
-                employeeName: (_c = authReq.user) === null || _c === void 0 ? void 0 : _c.name,
-                employeeId: (_d = authReq.user) === null || _d === void 0 ? void 0 : _d.employeeId,
-                department: (_e = authReq.user) === null || _e === void 0 ? void 0 : _e.department,
+                employeeName: (_d = authReq.user) === null || _d === void 0 ? void 0 : _d.name,
+                employeeId: (_e = authReq.user) === null || _e === void 0 ? void 0 : _e.employeeId,
+                department: (_f = authReq.user) === null || _f === void 0 ? void 0 : _f.department,
                 manager: managerName,
                 date: punch.date,
                 time: punch.time,

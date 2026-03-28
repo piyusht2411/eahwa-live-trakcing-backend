@@ -9,6 +9,8 @@ import { AuthRequest } from "../types/authRequest";
 import { closeStaleSession } from "../utils/closeStaleSession";
 import LocationLog from "../models/locationlogs";
 import { getRoadDistance } from "../utils/healper";
+import Alert from "../models/alert";
+import { sendAnomalyAlert } from "../services/notificationService";
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -55,6 +57,18 @@ export const punch = [
       });
 
       await punch.save();
+
+      // Late punch-in alert
+      if (type === "in" && punch.isLate) {
+        const userName = authReq.user?.name || String(userId);
+        const description = `${userName} punched in late at ${punch.time.toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" })} IST (after 10:15 AM)`;
+        await Alert.create({ user: userId, type: "late_arrival", description });
+        if (process.env.HR_WHATSAPP_TO) {
+          sendAnomalyAlert(String(userId), userName, "late_arrival", description).catch((err) =>
+            console.error("Late punch-in WhatsApp alert failed:", err.message)
+          );
+        }
+      }
 
       // On punch-out: calculate today's distance and save to user's travelHistory
       if (type === "out") {
