@@ -15,10 +15,9 @@ export const register = [
     const {
       name, email, password, role, department, phone,
       managerId, aadhaarNumber, address, employeeId, post,
-      homeLat, homeLng, homeAddress, mapColor
+      homeLat, homeLng, homeAddress, mapColor, employeeType
     } = req.body;
 
-    console.log(req.body);
 
     let profilePicture = "";
 
@@ -56,6 +55,9 @@ export const register = [
         homeLocation.address = homeAddress;
       }
 
+      // Roles that are treated as employees (get employeeId, can have leaves/attendance)
+      const employeeRoles = ["manager", "super_manager", "hr", "employee"];
+
       const user = new User({
         name,
         email,
@@ -63,7 +65,7 @@ export const register = [
         role,
         department,
         phone,
-        profilePicture,                    
+        profilePicture,
         ...(aadhaarNumber && { aadhaarNumber }),
         ...(address && { address }),
         ...(employeeId && { employeeId }),
@@ -71,12 +73,15 @@ export const register = [
         ...(managerId && { managedBy: managerId }),
         ...(Object.keys(homeLocation).length > 0 && { homeLocation }),
         ...(mapColor && { mapColor }),
+        // employeeType can be passed explicitly; if omitted the pre-save hook assigns
+        // "both" for manager/super_manager/hr and leaves employee as-is (must be provided for employees)
+        ...(employeeRoles.includes(role) && employeeType && { employeeType }),
       });
 
       await user.save();
 
-      // Auto-generate employeeId for employees
-      if (role === "employee") {
+      // Auto-generate employeeId for all employee-type roles
+      if (employeeRoles.includes(role) && !user.employeeId) {
         user.employeeId = `EMP${Date.now()}`;
         await user.save();
       }
@@ -92,13 +97,15 @@ export const register = [
           name,
           email,
           role,
+          employeeType: user.employeeType ?? null,
+          activeMode: user.activeMode ?? null,
           department,
           phone,
-          profilePicture,                  
+          profilePicture,
           managerId,
           aadhaarNumber,
           address,
-          employeeId,
+          employeeId: user.employeeId,
           post,
           homeLocation: user.homeLocation || null,
         },
@@ -184,6 +191,8 @@ export const login = async (req: Request, res: Response) => {
         name: user.name,
         email: user.email,
         role: user.role,
+        employeeType: user.employeeType ?? null,
+        activeMode: user.activeMode ?? null,
         profilePicture: user.profilePicture || "",
         department: user.department,
         phone: user.phone,

@@ -65,6 +65,7 @@ const anomaly_1 = __importDefault(require("./routes/anomaly"));
 const visit_1 = __importDefault(require("./routes/visit"));
 const heartbeat_1 = __importDefault(require("./routes/heartbeat"));
 const heatmap_1 = __importDefault(require("./routes/heatmap"));
+const notification_1 = __importDefault(require("./routes/notification"));
 const morgan_1 = __importDefault(require("morgan"));
 const admin = __importStar(require("firebase-admin"));
 dotenv_1.default.config();
@@ -130,6 +131,7 @@ app.use("/api/users", user_2.default);
 app.use("/api/attendance", attendance_1.default);
 app.use("/api/geofence", geofence_1.default);
 app.use("/api/performance", performance_1.default);
+app.use("/api/notifications", notification_1.default);
 app.use((err, req, res, next) => {
     res.status(500).json({ message: err.message });
 });

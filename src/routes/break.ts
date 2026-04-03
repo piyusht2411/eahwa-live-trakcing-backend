@@ -4,9 +4,9 @@ import { protect, authorize } from "../middleware/auth";
 
 const router = Router();
 
-router.post("/start", protect, authorize("employee"), startBreak);
-router.post("/end", protect, authorize("employee"), endBreak);
-router.get("/today", protect, authorize("employee"), getTodayBreaks);
-router.get("/all", protect, authorize("admin", "hr", "manager"), getAllBreaks);
+router.post("/start", protect, authorize("employee", "manager", "super_manager", "hr"), startBreak);
+router.post("/end", protect, authorize("employee", "manager", "super_manager", "hr"), endBreak);
+router.get("/today", protect, authorize("employee", "manager", "super_manager", "hr"), getTodayBreaks);
+router.get("/all", protect, authorize("admin", "super_manager", "hr", "manager"), getAllBreaks);
 
 export default router;

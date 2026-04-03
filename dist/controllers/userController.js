@@ -12,11 +12,12 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.deleteUser = exports.getUserTravelHistory = exports.updateUser = exports.getAdminsAndManagers = exports.getUsersHomeLocations = exports.getUserById = exports.getAllUsers = void 0;
+exports.deleteUser = exports.switchActiveMode = exports.getUserTravelHistory = exports.updateUser = exports.getAdminsAndManagers = exports.getUsersHomeLocations = exports.getUserById = exports.getAllUsers = void 0;
 const user_1 = __importDefault(require("../models/user"));
 const punch_1 = __importDefault(require("../models/punch"));
 const locationlogs_1 = __importDefault(require("../models/locationlogs"));
 const performance_1 = __importDefault(require("../models/performance"));
+const notification_1 = __importDefault(require("../models/notification"));
 const healper_1 = require("../utils/healper");
 const multer_1 = __importDefault(require("multer"));
 const cloudinary_1 = __importDefault(require("../config/cloudinary"));
@@ -153,7 +154,7 @@ const getUsersHomeLocations = (req, res) => __awaiter(void 0, void 0, void 0, fu
             // ?roles=employee,manager  OR  ?roles=employee
             roles = rolesParam.split(",").map(r => r.trim()).filter(Boolean);
         }
-        const validRoles = ["admin", "hr", "manager", "employee"];
+        const validRoles = ["admin", "super_manager", "hr", "manager", "employee"];
         const filteredRoles = roles.filter(r => validRoles.includes(r));
         const query = { isActive: true };
         if (filteredRoles.length > 0) {
@@ -186,13 +187,13 @@ exports.getUsersHomeLocations = getUsersHomeLocations;
 const getAdminsAndManagers = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
         const users = yield user_1.default.find({
-            role: { $in: ["admin", "manager"] },
-            isActive: true // Optional: Only active users
-        }).select("name _id").lean(); // Use lean() for better performance since we only need basic fields
-        // Transform to include a display label for the frontend select (name + ID for clarity)
+            role: { $in: ["admin", "super_manager", "manager", "hr"] },
+            isActive: true,
+        }).select("name _id role").lean();
         const transformedUsers = users.map(user => ({
             id: user._id.toString(),
-            name: user.name
+            name: user.name,
+            role: user.role,
         }));
         res.status(200).json({
             success: true,
@@ -239,6 +240,35 @@ exports.updateUser = [
             if (updateData.managerId !== undefined) {
                 updateData.managedBy = updateData.managerId || null;
                 delete updateData.managerId;
+            }
+            // === Auto-assign employeeType for managerial/HR roles when role changes ===
+            // Mirrors the pre-save hook logic (bypassed by findByIdAndUpdate).
+            const dualRoles = ["manager", "super_manager", "hr"];
+            if (updateData.role !== undefined && !updateData.employeeType) {
+                const current = yield user_1.default.findById(id).select("employeeType").lean();
+                const currentType = current === null || current === void 0 ? void 0 : current.employeeType;
+                if (dualRoles.includes(updateData.role) && !currentType) {
+                    updateData.employeeType = "both";
+                }
+            }
+            // === Sync activeMode when employeeType changes ===
+            // findByIdAndUpdate bypasses pre-save hooks, so we mirror the model logic here.
+            if (updateData.employeeType !== undefined) {
+                if (updateData.employeeType === "asm") {
+                    updateData.activeMode = "asm";
+                }
+                else if (updateData.employeeType === "office") {
+                    updateData.activeMode = "office";
+                }
+                else if (updateData.employeeType === "both") {
+                    if (updateData.activeMode === undefined) {
+                        const current = yield user_1.default.findById(id).select("activeMode").lean();
+                        updateData.activeMode = (current === null || current === void 0 ? void 0 : current.activeMode) || "office";
+                    }
+                }
+                else if (updateData.employeeType === null) {
+                    updateData.activeMode = null;
+                }
             }
             // Update (works for both PUT and PATCH)
             const updatedEmployee = yield user_1.default.findByIdAndUpdate(id, { $set: updateData }, { new: true, runValidators: true }).select("-password");
@@ -306,6 +336,44 @@ const getUserTravelHistory = (req, res) => __awaiter(void 0, void 0, void 0, fun
     }
 });
 exports.getUserTravelHistory = getUserTravelHistory;
+// PATCH /api/users/me/active-mode
+// Allows a "both" employeeType user to toggle between ASM and office mode from the APK.
+const switchActiveMode = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    var _a;
+    const userId = req.user._id;
+    const { activeMode } = req.body;
+    if (activeMode !== "asm" && activeMode !== "office") {
+        return res.status(400).json({ success: false, message: "activeMode must be 'asm' or 'office'" });
+    }
+    try {
+        const user = yield user_1.default.findById(userId).select("employeeType activeMode").lean();
+        if (!user) {
+            return res.status(404).json({ success: false, message: "User not found" });
+        }
+        if (user.employeeType !== "both") {
+            return res.status(403).json({
+                success: false,
+                message: "Only users with employeeType 'both' can switch active mode",
+            });
+        }
+        const previousMode = (_a = user.activeMode) !== null && _a !== void 0 ? _a : "office";
+        yield user_1.default.findByIdAndUpdate(userId, { activeMode });
+        // Save audit record — admin can query these to see who switched when
+        yield notification_1.default.create({
+            user: userId,
+            title: "Mode Switched",
+            body: `Switched from ${previousMode} to ${activeMode} mode`,
+            type: "mode_switch",
+            data: { from: previousMode, to: activeMode },
+        });
+        res.status(200).json({ success: true, activeMode });
+    }
+    catch (error) {
+        console.error("Switch active mode error:", error);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+});
+exports.switchActiveMode = switchActiveMode;
 // ====================== DELETE EMPLOYEE (HARD DELETE) ======================
 const deleteUser = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {

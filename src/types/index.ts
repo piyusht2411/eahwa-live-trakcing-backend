@@ -1,11 +1,38 @@
 // src/types/user.ts
 import { Document, Types } from "mongoose";
 
+/**
+ * Role hierarchy:
+ *   admin        → web app only, no employee features
+ *   super_manager → oversees all managers, no employee features
+ *   manager      → also treated as an employee (has attendance, leaves, etc.)
+ *   hr           → also treated as an employee
+ *   employee     → base employee
+ *
+ * Employee sub-types (applicable to manager / hr / employee roles):
+ *   asm    → Area Sales Manager, field-going, location is always tracked
+ *   office → Office-based, location is never tracked
+ *   both   → Dual role; activeMode determines current behaviour
+ *
+ * activeMode (only meaningful when employeeType === "both"):
+ *   asm    → currently working as ASM → track location
+ *   office → currently working as office employee → do not track location
+ *   Toggled via a button in the APK (PATCH /users/me/active-mode)
+ */
 export interface IUser extends Document {
   name: string;
   email: string;
   password: string;
-  role: "admin" | "hr" | "manager" | "employee";
+  role: "admin" | "super_manager" | "manager" | "hr" | "employee";
+  /** Sub-type for roles that are treated as employees (manager / hr / employee) */
+  employeeType?: "asm" | "office" | "both";
+  /**
+   * Current active mode.
+   * - For employeeType "asm"    → always "asm"    (set on creation, not user-changeable)
+   * - For employeeType "office" → always "office" (set on creation, not user-changeable)
+   * - For employeeType "both"   → toggled from the APK; drives location-tracking logic
+   */
+  activeMode?: "asm" | "office";
   department: string;
   employeeId?: string;
   phone: string;
@@ -107,6 +134,8 @@ export interface ITask extends Document {
 export interface ILeave extends Document {
   user: Types.ObjectId | IUser;
   type: "casual" | "short" | "half-day" | "sick" | "annual";
+  /** Only for type === "short". 1 or 2 hours. */
+  shortLeaveDuration?: 1 | 2;
   date: Date;
   reason?: string;
   status: "pending" | "approved" | "rejected";
@@ -163,6 +192,16 @@ export interface IAlert extends Document {
   resolved: boolean;
   createdAt: Date;
   updatedAt: Date;
+}
+
+export interface INotification extends Document {
+  user: Types.ObjectId;
+  title: string;
+  body: string;
+  type: "leave_request" | "leave_approved" | "leave_rejected" | "mode_switch" | "general";
+  data?: Map<string, string>;
+  read: boolean;
+  createdAt: Date;
 }
 
 export interface IWorkingHours extends Document {

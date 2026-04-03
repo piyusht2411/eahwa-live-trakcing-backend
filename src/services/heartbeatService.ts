@@ -25,7 +25,7 @@ export const checkHeartbeats = async () => {
 
     const staleUsers = await User.find({
       lastLocationAt: { $lt: cutoffTime, $ne: null },
-      role: { $in: ["employee", "manager"] },
+      activeMode: "asm",
     });
 
     let alertedCount = 0;
@@ -111,7 +111,7 @@ export const checkLongStationary = async () => {
     // Only users who ARE actively sharing location (lastLocationAt is fresh)
     const activeUsers = await User.find({
       lastLocationAt: { $gte: cutoffTime },
-      role: { $in: ["employee", "manager"] },
+      activeMode: "asm",
     });
 
     let alertedCount = 0;

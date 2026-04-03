@@ -23,8 +23,8 @@ const upload = (0, multer_1.default)({ storage: multer_1.default.memoryStorage()
 exports.register = [
     upload.single("profilePicture"), // ← multer middleware (optional field)
     (req, res) => __awaiter(void 0, void 0, void 0, function* () {
-        const { name, email, password, role, department, phone, managerId, aadhaarNumber, address, employeeId, post, homeLat, homeLng, homeAddress, mapColor } = req.body;
-        console.log(req.body);
+        var _a, _b;
+        const { name, email, password, role, department, phone, managerId, aadhaarNumber, address, employeeId, post, homeLat, homeLng, homeAddress, mapColor, employeeType } = req.body;
         let profilePicture = "";
         try {
             // === Upload profile picture to Cloudinary (if file sent) ===
@@ -57,16 +57,18 @@ exports.register = [
             if (homeAddress != null) {
                 homeLocation.address = homeAddress;
             }
-            const user = new user_1.default(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign({ name,
+            // Roles that are treated as employees (get employeeId, can have leaves/attendance)
+            const employeeRoles = ["manager", "super_manager", "hr", "employee"];
+            const user = new user_1.default(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign(Object.assign({ name,
                 email,
                 password,
                 role,
                 department,
                 phone,
-                profilePicture }, (aadhaarNumber && { aadhaarNumber })), (address && { address })), (employeeId && { employeeId })), (post && { post })), (managerId && { managedBy: managerId })), (Object.keys(homeLocation).length > 0 && { homeLocation })), (mapColor && { mapColor })));
+                profilePicture }, (aadhaarNumber && { aadhaarNumber })), (address && { address })), (employeeId && { employeeId })), (post && { post })), (managerId && { managedBy: managerId })), (Object.keys(homeLocation).length > 0 && { homeLocation })), (mapColor && { mapColor })), (employeeRoles.includes(role) && employeeType && { employeeType })));
             yield user.save();
-            // Auto-generate employeeId for employees
-            if (role === "employee") {
+            // Auto-generate employeeId for all employee-type roles
+            if (employeeRoles.includes(role) && !user.employeeId) {
                 user.employeeId = `EMP${Date.now()}`;
                 yield user.save();
             }
@@ -80,13 +82,15 @@ exports.register = [
                     name,
                     email,
                     role,
+                    employeeType: (_a = user.employeeType) !== null && _a !== void 0 ? _a : null,
+                    activeMode: (_b = user.activeMode) !== null && _b !== void 0 ? _b : null,
                     department,
                     phone,
                     profilePicture,
                     managerId,
                     aadhaarNumber,
                     address,
-                    employeeId,
+                    employeeId: user.employeeId,
                     post,
                     homeLocation: user.homeLocation || null,
                 },
@@ -99,7 +103,7 @@ exports.register = [
     }),
 ];
 const login = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
-    var _a;
+    var _a, _b, _c;
     const { userName, password, fcmToken } = req.body;
     try {
         const user = yield user_1.default.findOne({
@@ -160,6 +164,8 @@ const login = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
                 name: user.name,
                 email: user.email,
                 role: user.role,
+                employeeType: (_b = user.employeeType) !== null && _b !== void 0 ? _b : null,
+                activeMode: (_c = user.activeMode) !== null && _c !== void 0 ? _c : null,
                 profilePicture: user.profilePicture || "",
                 department: user.department,
                 phone: user.phone,

@@ -48,6 +48,11 @@ const calculateSpeed = (log1, log2) => {
 };
 // ── Main ──────────────────────────────────────────────────────────────────────
 const detectAnomalies = (userId, log) => __awaiter(void 0, void 0, void 0, function* () {
+    // Anomaly detection only applies to users actively working as ASM (field mode).
+    // Office employees and dual-role users in office mode are excluded.
+    const userRecord = yield user_1.default.findById(userId).select("activeMode").lean();
+    if (!userRecord || userRecord.activeMode !== "asm")
+        return;
     const [recentLogs, recentPunches, employeeName] = yield Promise.all([
         locationlogs_1.default.find({ user: userId }).sort({ timestamp: -1 }).limit(10),
         punch_1.default.find({ user: userId }).sort({ time: -1 }).limit(5),

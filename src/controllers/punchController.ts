@@ -58,7 +58,7 @@ export const punch = [
 
       await punch.save();
 
-      // Late punch-in alert
+      // Late punch-in alert — applies to all employee types.
       if (type === "in" && punch.isLate) {
         const userName = authReq.user?.name || String(userId);
         const description = `${userName} punched in late at ${punch.time.toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" })} IST (after 10:15 AM)`;

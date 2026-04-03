@@ -5,6 +5,6 @@ import { protect, authorize } from "../middleware/auth";
 const router = Router();
 
 // /api/stats
-router.get("/dashboard", protect, authorize("employee"), getDashboardStats);
+router.get("/dashboard", protect, authorize("employee", "manager", "super_manager", "hr"), getDashboardStats);
 
 export default router;

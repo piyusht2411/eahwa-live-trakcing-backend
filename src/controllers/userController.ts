@@ -4,6 +4,7 @@ import User from "../models/user";
 import Punch from "../models/punch";
 import LocationLog from "../models/locationlogs";
 import Performance from "../models/performance";
+import Notification from "../models/notification";
 import { getRoadDistance } from "../utils/healper";
 import multer from "multer";
 import cloudinary from "../config/cloudinary";
@@ -173,7 +174,7 @@ export const getUsersHomeLocations = async (req: Request, res: Response) => {
             roles = rolesParam.split(",").map(r => r.trim()).filter(Boolean);
         }
 
-        const validRoles = ["admin", "hr", "manager", "employee"];
+        const validRoles = ["admin", "super_manager", "hr", "manager", "employee"];
         const filteredRoles = roles.filter(r => validRoles.includes(r));
 
         const query: any = { isActive: true };
@@ -205,15 +206,15 @@ export const getUsersHomeLocations = async (req: Request, res: Response) => {
 
 export const getAdminsAndManagers = async (req: Request, res: Response) => {
   try {
-    const users = await User.find({ 
-      role: { $in: ["admin", "manager"] },
-      isActive: true // Optional: Only active users
-    }).select("name _id").lean(); // Use lean() for better performance since we only need basic fields
+    const users = await User.find({
+      role: { $in: ["admin", "super_manager", "manager", "hr"] },
+      isActive: true,
+    }).select("name _id role").lean();
 
-    // Transform to include a display label for the frontend select (name + ID for clarity)
     const transformedUsers = users.map(user => ({
       id: user._id.toString(),
-      name: user.name
+      name: user.name,
+      role: user.role,
     }));
 
     res.status(200).json({
@@ -266,6 +267,34 @@ export const updateUser = [
       if (updateData.managerId !== undefined) {
         updateData.managedBy = updateData.managerId || null;
         delete updateData.managerId;
+      }
+
+      // === Auto-assign employeeType for managerial/HR roles when role changes ===
+      // Mirrors the pre-save hook logic (bypassed by findByIdAndUpdate).
+      const dualRoles = ["manager", "super_manager", "hr"];
+      if (updateData.role !== undefined && !updateData.employeeType) {
+        const current = await User.findById(id).select("employeeType").lean();
+        const currentType = (current as any)?.employeeType;
+        if (dualRoles.includes(updateData.role) && !currentType) {
+          updateData.employeeType = "both";
+        }
+      }
+
+      // === Sync activeMode when employeeType changes ===
+      // findByIdAndUpdate bypasses pre-save hooks, so we mirror the model logic here.
+      if (updateData.employeeType !== undefined) {
+        if (updateData.employeeType === "asm") {
+          updateData.activeMode = "asm";
+        } else if (updateData.employeeType === "office") {
+          updateData.activeMode = "office";
+        } else if (updateData.employeeType === "both") {
+          if (updateData.activeMode === undefined) {
+            const current = await User.findById(id).select("activeMode").lean();
+            updateData.activeMode = (current as any)?.activeMode || "office";
+          }
+        } else if (updateData.employeeType === null) {
+          updateData.activeMode = null;
+        }
       }
 
       // Update (works for both PUT and PATCH)
@@ -343,6 +372,49 @@ export const getUserTravelHistory = async (req: Request, res: Response) => {
         console.error("Get travel history error:", error);
         res.status(500).json({ success: false, message: "Server error" });
     }
+};
+
+// PATCH /api/users/me/active-mode
+// Allows a "both" employeeType user to toggle between ASM and office mode from the APK.
+export const switchActiveMode = async (req: Request, res: Response) => {
+  const userId = (req as any).user._id;
+  const { activeMode } = req.body;
+
+  if (activeMode !== "asm" && activeMode !== "office") {
+    return res.status(400).json({ success: false, message: "activeMode must be 'asm' or 'office'" });
+  }
+
+  try {
+    const user = await User.findById(userId).select("employeeType activeMode").lean();
+
+    if (!user) {
+      return res.status(404).json({ success: false, message: "User not found" });
+    }
+
+    if ((user as any).employeeType !== "both") {
+      return res.status(403).json({
+        success: false,
+        message: "Only users with employeeType 'both' can switch active mode",
+      });
+    }
+
+    const previousMode = (user as any).activeMode ?? "office";
+    await User.findByIdAndUpdate(userId, { activeMode });
+
+    // Save audit record — admin can query these to see who switched when
+    await Notification.create({
+      user: userId,
+      title: "Mode Switched",
+      body: `Switched from ${previousMode} to ${activeMode} mode`,
+      type: "mode_switch",
+      data: { from: previousMode, to: activeMode },
+    });
+
+    res.status(200).json({ success: true, activeMode });
+  } catch (error) {
+    console.error("Switch active mode error:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
 };
 
 // ====================== DELETE EMPLOYEE (HARD DELETE) ======================

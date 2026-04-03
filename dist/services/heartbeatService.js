@@ -36,7 +36,7 @@ const checkHeartbeats = () => __awaiter(void 0, void 0, void 0, function* () {
         const cutoffTime = new Date(Date.now() - THRESHOLD_MINUTES * 60 * 1000);
         const staleUsers = yield user_1.default.find({
             lastLocationAt: { $lt: cutoffTime, $ne: null },
-            role: { $in: ["employee", "manager"] },
+            activeMode: "asm",
         });
         let alertedCount = 0;
         const today = new Date();
@@ -109,7 +109,7 @@ const checkLongStationary = () => __awaiter(void 0, void 0, void 0, function* ()
         // Only users who ARE actively sharing location (lastLocationAt is fresh)
         const activeUsers = yield user_1.default.find({
             lastLocationAt: { $gte: cutoffTime },
-            role: { $in: ["employee", "manager"] },
+            activeMode: "asm",
         });
         let alertedCount = 0;
         for (const user of activeUsers) {

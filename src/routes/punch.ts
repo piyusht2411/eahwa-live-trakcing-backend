@@ -5,7 +5,7 @@ import { protect, authorize } from "../middleware/auth";
 
 const router = Router();
 
-router.get("/status", protect, authorize("employee"), getTodayStatus);
-router.post("/", protect, authorize("employee"), punch);
+router.get("/status", protect, authorize("employee", "manager", "super_manager", "hr"), getTodayStatus);
+router.post("/", protect, authorize("employee", "manager", "super_manager", "hr"), punch);
 
 export default router;

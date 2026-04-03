@@ -9,7 +9,6 @@ var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, ge
     });
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-// src/models/User.ts
 const mongoose_1 = require("mongoose");
 const bcrypt_1 = require("bcrypt");
 const userSchema = new mongoose_1.Schema({
@@ -28,9 +27,27 @@ const userSchema = new mongoose_1.Schema({
     },
     role: {
         type: String,
-        enum: ["admin", "hr", "manager", "employee"],
+        enum: ["admin", "super_manager", "manager", "hr", "employee"],
         default: "employee",
         required: true,
+    },
+    /**
+     * Sub-type for roles treated as employees (manager / hr / employee).
+     * Not required for admin / super_manager.
+     */
+    employeeType: {
+        type: String,
+        enum: ["asm", "office", "both"],
+        default: null,
+    },
+    /**
+     * Current active mode — drives location-tracking logic.
+     * Fixed for single-type employees; toggled via APK for "both" type.
+     */
+    activeMode: {
+        type: String,
+        enum: ["asm", "office"],
+        default: null,
     },
     department: {
         type: String,
@@ -104,6 +121,53 @@ const userSchema = new mongoose_1.Schema({
         default: null,
     },
 }, { timestamps: true });
+/**
+ * Virtual: true when location tracking should be active for this user.
+ * - admin / super_manager   → never tracked
+ * - asm employeeType        → always tracked
+ * - office employeeType     → never tracked
+ * - both employeeType       → tracked only when activeMode === "asm"
+ */
+userSchema.virtual("shouldTrackLocation").get(function () {
+    if (this.role === "admin" || this.role === "super_manager")
+        return false;
+    return this.activeMode === "asm";
+});
+/**
+ * Keep activeMode consistent with employeeType.
+ *
+ * Auto-assignment rules (applied before the activeMode sync):
+ *   - manager / super_manager / hr with no employeeType set → "both" (they can work in the field or office)
+ *   - admin with no employeeType → remains null (no tracking)
+ *
+ * ActiveMode sync:
+ *   - "asm"    → lock activeMode to "asm"
+ *   - "office" → lock activeMode to "office"
+ *   - "both"   → default activeMode to "office" if unset (they start in office mode)
+ *   - null     → clear activeMode (admin only)
+ */
+userSchema.pre("save", function (next) {
+    const dualRoles = ["manager", "super_manager", "hr"];
+    // Auto-assign "both" for managerial/HR roles that haven't been given an explicit employeeType
+    if ((this.isNew || this.isModified("role")) && !this.employeeType && dualRoles.includes(this.role)) {
+        this.employeeType = "both";
+    }
+    if (this.isModified("employeeType") || this.isNew) {
+        if (this.employeeType === "asm") {
+            this.activeMode = "asm";
+        }
+        else if (this.employeeType === "office") {
+            this.activeMode = "office";
+        }
+        else if (this.employeeType === "both" && !this.activeMode) {
+            this.activeMode = "office"; // default to office mode
+        }
+        else if (!this.employeeType) {
+            this.activeMode = undefined;
+        }
+    }
+    next();
+});
 userSchema.pre("save", function (next) {
     return __awaiter(this, void 0, void 0, function* () {
         const user = this;

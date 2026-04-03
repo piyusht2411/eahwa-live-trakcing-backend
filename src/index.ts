@@ -27,6 +27,7 @@ import anomalyRoutes from "./routes/anomaly";
 import visitRoutes from "./routes/visit";
 import heartbeatRoutes from "./routes/heartbeat";
 import heatmapRoutes from "./routes/heatmap";
+import notificationRoutes from "./routes/notification";
 import morgan from "morgan";
 import * as admin from "firebase-admin";
 
@@ -107,6 +108,7 @@ app.use("/api/users", userRoutes);
 app.use("/api/attendance", attendanceRoutes);
 app.use("/api/geofence", geofenceRoutes);
 app.use("/api/performance", performanceRoutes);
+app.use("/api/notifications", notificationRoutes);
 app.use((err: Error, req: Request, res: Response, next: NextFunction) => {
   res.status(500).json({ message: err.message });
 });

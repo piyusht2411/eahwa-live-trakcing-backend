@@ -1,17 +1,45 @@
 // src/routes/leave.ts
 import { Router } from "express";
-import { requestLeave, approveLeave, getLeaveHistory, getAllLeaves, updateLeaveStatus, deleteLeave } from "../controllers/leaveController";
+import {
+  requestLeave,
+  approveLeave,
+  updateLeaveStatus,
+  getAllLeaves,
+  getTeamLeaves,
+  getLeaveHistory,
+  getLeaveById,
+  getTeamMembers,
+  getAllEmployeesForFilter,
+  deleteLeave,
+} from "../controllers/leaveController";
 import { protect, authorize } from "../middleware/auth";
 
 const router = Router();
 
-router.post("/", protect, authorize("employee"), requestLeave);
-router.patch("/approve", protect, authorize("hr", "manager"), approveLeave);
-router.get("/history", protect, authorize("employee"), getLeaveHistory);
+// ── Employee actions ──────────────────────────────────────────────────────────
+// Any employee-type role can request and view their own leaves
+router.post("/", protect, authorize("employee", "manager", "hr"), requestLeave);
+router.get("/my", protect, authorize("employee", "manager", "hr"), getLeaveHistory);
 
-// Phase 3 Admin endpoints
-router.get("/", protect, authorize("admin", "hr", "manager"), getAllLeaves);
-router.put("/:id/status", protect, authorize("admin", "hr", "manager"), updateLeaveStatus);
-router.delete("/:id", protect, authorize("admin", "hr", "manager"), deleteLeave);
+// ── Manager-specific ──────────────────────────────────────────────────────────
+// Must be above /:id to avoid route collision
+router.get("/team/members", protect, authorize("manager"), getTeamMembers);
+router.get("/team", protect, authorize("manager"), getTeamLeaves);
+
+// ── HR / Admin filter dropdown ────────────────────────────────────────────────
+router.get("/employees", protect, authorize("admin", "super_manager", "hr"), getAllEmployeesForFilter);
+
+// ── Admin / Super Manager / HR: all leaves ────────────────────────────────────
+router.get("/", protect, authorize("admin", "super_manager", "hr"), getAllLeaves);
+
+// ── Leave approval ────────────────────────────────────────────────────────────
+router.patch("/approve", protect, authorize("hr", "manager", "admin", "super_manager"), approveLeave);
+router.put("/:id/status", protect, authorize("admin", "super_manager", "hr", "manager"), updateLeaveStatus);
+
+// ── Single leave detail ───────────────────────────────────────────────────────
+router.get("/:id", protect, authorize("admin", "super_manager", "hr", "manager"), getLeaveById);
+
+// ── Delete ────────────────────────────────────────────────────────────────────
+router.delete("/:id", protect, authorize("admin", "super_manager", "hr"), deleteLeave);
 
 export default router;

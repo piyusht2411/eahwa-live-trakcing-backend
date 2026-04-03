@@ -304,6 +304,13 @@ export const logLocation = async (req: Request, res: Response) => {
   const userId = (req as any).user._id;
 
   try {
+    // Only track location for users in ASM mode.
+    // Office employees, dual-role users in office mode, and non-employee roles are skipped.
+    const user = await User.findById(userId).select("activeMode role").lean();
+    if (!user || user.activeMode !== "asm") {
+      return res.json({ message: "Location tracking not active for this user" });
+    }
+
     // Check punch status
     const today = new Date();
     today.setHours(0, 0, 0, 0);
@@ -504,10 +511,12 @@ export const getHeatMap = async (req: Request, res: Response) => {
       },
     };
 
-    if (authUser.role === "manager") {
+    if (authUser.role === "super_manager") {
+      // super_manager sees all — no user filter added
+    } else if (authUser.role === "manager") {
       const team = await User.find({ managedBy: authUserId }).select("_id");
       timeQuery.user = { $in: team.map((u: any) => u._id) };
-    } else if (authUser.role === "employee") {
+    } else if (authUser.role === "employee" || authUser.role === "hr") {
       timeQuery.user = authUserId;
     }
 
@@ -543,12 +552,18 @@ export const checkHomeIdleUsers = async (req: Request, res: Response) => {
 
     const cutoff = new Date(now.getTime() - IDLE_MINUTES * 60 * 1000);
 
+    // Only check users who are currently in ASM mode (location is being tracked).
+    // Office employees and dual-role users in office mode are excluded.
+    const asmUserIds = await User.find({ activeMode: "asm", isActive: true }).select("_id").lean();
+    const asmIdSet = asmUserIds.map((u: any) => u._id);
+
     const punchIns = await Punch.find({
       type: "in",
       date: { $gte: today },
       time: { $lte: cutoff },
+      user: { $in: asmIdSet },
     })
-      .populate<{ user: any }>("user", "name homeLocation role")
+      .populate<{ user: any }>("user", "name homeLocation role activeMode")
       .lean();
 
     const alerted: string[] = [];

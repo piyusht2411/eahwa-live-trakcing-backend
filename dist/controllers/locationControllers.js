@@ -233,6 +233,12 @@ const logLocation = (req, res) => __awaiter(void 0, void 0, void 0, function* ()
     const { location, speed, battery, isOffline, gpsDisabled, internetDisabled, deviceOff, } = req.body;
     const userId = req.user._id;
     try {
+        // Only track location for users in ASM mode.
+        // Office employees, dual-role users in office mode, and non-employee roles are skipped.
+        const user = yield user_1.default.findById(userId).select("activeMode role").lean();
+        if (!user || user.activeMode !== "asm") {
+            return res.json({ message: "Location tracking not active for this user" });
+        }
         // Check punch status
         const today = new Date();
         today.setHours(0, 0, 0, 0);
@@ -388,11 +394,14 @@ const getHeatMap = (req, res) => __awaiter(void 0, void 0, void 0, function* () 
                 $lte: new Date(end),
             },
         };
-        if (authUser.role === "manager") {
+        if (authUser.role === "super_manager") {
+            // super_manager sees all — no user filter added
+        }
+        else if (authUser.role === "manager") {
             const team = yield user_1.default.find({ managedBy: authUserId }).select("_id");
             timeQuery.user = { $in: team.map((u) => u._id) };
         }
-        else if (authUser.role === "employee") {
+        else if (authUser.role === "employee" || authUser.role === "hr") {
             timeQuery.user = authUserId;
         }
         const logs = yield locationlogs_1.default.aggregate([
@@ -425,12 +434,17 @@ const checkHomeIdleUsers = (req, res) => __awaiter(void 0, void 0, void 0, funct
         const today = new Date();
         today.setHours(0, 0, 0, 0);
         const cutoff = new Date(now.getTime() - IDLE_MINUTES * 60 * 1000);
+        // Only check users who are currently in ASM mode (location is being tracked).
+        // Office employees and dual-role users in office mode are excluded.
+        const asmUserIds = yield user_1.default.find({ activeMode: "asm", isActive: true }).select("_id").lean();
+        const asmIdSet = asmUserIds.map((u) => u._id);
         const punchIns = yield punch_1.default.find({
             type: "in",
             date: { $gte: today },
             time: { $lte: cutoff },
+            user: { $in: asmIdSet },
         })
-            .populate("user", "name homeLocation role")
+            .populate("user", "name homeLocation role activeMode")
             .lean();
         const alerted = [];
         for (const punch of punchIns) {

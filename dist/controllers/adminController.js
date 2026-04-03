@@ -363,9 +363,17 @@ const findInactiveEmployees = () => __awaiter(void 0, void 0, void 0, function* 
             });
         }
     }
-    const punchedInUserIds = Array.from(userPunchMap.entries())
+    const allPunchedInIds = Array.from(userPunchMap.entries())
         .filter(([, v]) => v.lastType === "in")
         .map(([uid]) => uid);
+    if (allPunchedInIds.length === 0)
+        return [];
+    // Filter to only ASM-mode users — inactive/no-movement alerts are irrelevant for office employees.
+    const asmUsers = yield user_1.default.find({
+        _id: { $in: allPunchedInIds },
+        activeMode: "asm",
+    }).select("_id").lean();
+    const punchedInUserIds = asmUsers.map((u) => u._id.toString());
     if (punchedInUserIds.length === 0)
         return [];
     // 2. Get latest location log for each punched-in user

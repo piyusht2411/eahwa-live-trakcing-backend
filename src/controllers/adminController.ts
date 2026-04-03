@@ -388,9 +388,18 @@ const findInactiveEmployees = async () => {
         }
     }
 
-    const punchedInUserIds = Array.from(userPunchMap.entries())
+    const allPunchedInIds = Array.from(userPunchMap.entries())
         .filter(([, v]) => v.lastType === "in")
         .map(([uid]) => uid);
+
+    if (allPunchedInIds.length === 0) return [];
+
+    // Filter to only ASM-mode users — inactive/no-movement alerts are irrelevant for office employees.
+    const asmUsers = await User.find({
+        _id: { $in: allPunchedInIds },
+        activeMode: "asm",
+    }).select("_id").lean();
+    const punchedInUserIds = asmUsers.map((u: any) => u._id.toString());
 
     if (punchedInUserIds.length === 0) return [];
 

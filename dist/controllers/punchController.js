@@ -62,7 +62,7 @@ exports.punch = [
                 selfie: selfieResult.secure_url,
             });
             yield punch.save();
-            // Late punch-in alert
+            // Late punch-in alert — applies to all employee types.
             if (type === "in" && punch.isLate) {
                 const userName = ((_b = authReq.user) === null || _b === void 0 ? void 0 : _b.name) || String(userId);
                 const description = `${userName} punched in late at ${punch.time.toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" })} IST (after 10:15 AM)`;

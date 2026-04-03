@@ -50,6 +50,11 @@ const calculateSpeed = (log1: any, log2: any): number => {
 
 // ── Main ──────────────────────────────────────────────────────────────────────
 export const detectAnomalies = async (userId: string, log: any) => {
+  // Anomaly detection only applies to users actively working as ASM (field mode).
+  // Office employees and dual-role users in office mode are excluded.
+  const userRecord = await User.findById(userId).select("activeMode").lean();
+  if (!userRecord || (userRecord as any).activeMode !== "asm") return;
+
   const [recentLogs, recentPunches, employeeName] = await Promise.all([
     LocationLog.find({ user: userId }).sort({ timestamp: -1 }).limit(10),
     Punch.find({ user: userId }).sort({ time: -1 }).limit(5),
