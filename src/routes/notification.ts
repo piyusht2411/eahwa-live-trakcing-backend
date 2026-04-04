@@ -1,6 +1,7 @@
 import { Router } from "express";
 import {
   getMyNotifications,
+  getNotificationById,
   getUserNotifications,
   markAsRead,
   markAllAsRead,
@@ -16,6 +17,7 @@ router.get("/mode-switches", protect, authorize("admin", "super_manager", "hr"),
 
 // Any authenticated user can read their own notifications
 router.get("/", protect, getMyNotifications);
+router.get("/:id", protect, getNotificationById);
 router.patch("/:id/read", protect, markAsRead);
 
 // Admin / HR / Manager: view any user's notification history

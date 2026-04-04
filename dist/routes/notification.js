@@ -9,6 +9,7 @@ router.patch("/read-all", auth_1.protect, notificationController_1.markAllAsRead
 router.get("/mode-switches", auth_1.protect, (0, auth_1.authorize)("admin", "super_manager", "hr"), notificationController_1.getModeSwitchLogs);
 // Any authenticated user can read their own notifications
 router.get("/", auth_1.protect, notificationController_1.getMyNotifications);
+router.get("/:id", auth_1.protect, notificationController_1.getNotificationById);
 router.patch("/:id/read", auth_1.protect, notificationController_1.markAsRead);
 // Admin / HR / Manager: view any user's notification history
 router.get("/user/:userId", auth_1.protect, (0, auth_1.authorize)("admin", "super_manager", "hr", "manager"), notificationController_1.getUserNotifications);

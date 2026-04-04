@@ -55,6 +55,27 @@ export const markAsRead = async (req: Request, res: Response) => {
   }
 };
 
+// ─── GET /api/notifications/:id — fetch single notification + mark as read ─────
+
+export const getNotificationById = async (req: Request, res: Response) => {
+  if (!req.user) return res.status(401).json({ message: "Unauthorized" });
+
+  try {
+    const notif = await Notification.findOneAndUpdate(
+      { _id: req.params.id, user: req.user._id }, // scoped to owner
+      { read: true },
+      { new: true }
+    ).lean();
+
+    if (!notif) return res.status(404).json({ success: false, message: "Notification not found" });
+
+    res.status(200).json({ success: true, data: notif });
+  } catch (error) {
+    console.error("Get notification by id error:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
 // ─── PATCH /api/notifications/read-all — mark all as read for current user ────
 
 export const markAllAsRead = async (req: Request, res: Response) => {

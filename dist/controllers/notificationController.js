@@ -12,7 +12,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getModeSwitchLogs = exports.getUserNotifications = exports.markAllAsRead = exports.markAsRead = exports.getMyNotifications = void 0;
+exports.getModeSwitchLogs = exports.getUserNotifications = exports.markAllAsRead = exports.getNotificationById = exports.markAsRead = exports.getMyNotifications = void 0;
 const notification_1 = __importDefault(require("../models/notification"));
 // ─── GET /api/notifications — user's own notification history ─────────────────
 const getMyNotifications = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
@@ -61,6 +61,23 @@ const markAsRead = (req, res) => __awaiter(void 0, void 0, void 0, function* () 
     }
 });
 exports.markAsRead = markAsRead;
+// ─── GET /api/notifications/:id — fetch single notification + mark as read ─────
+const getNotificationById = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    if (!req.user)
+        return res.status(401).json({ message: "Unauthorized" });
+    try {
+        const notif = yield notification_1.default.findOneAndUpdate({ _id: req.params.id, user: req.user._id }, // scoped to owner
+        { read: true }, { new: true }).lean();
+        if (!notif)
+            return res.status(404).json({ success: false, message: "Notification not found" });
+        res.status(200).json({ success: true, data: notif });
+    }
+    catch (error) {
+        console.error("Get notification by id error:", error);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+});
+exports.getNotificationById = getNotificationById;
 // ─── PATCH /api/notifications/read-all — mark all as read for current user ────
 const markAllAsRead = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     if (!req.user)
