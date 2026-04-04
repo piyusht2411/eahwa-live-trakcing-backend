@@ -376,6 +376,8 @@ export const getLeaveHistory = async (req: Request, res: Response) => {
 // ─── GET /api/leaves/:id — Single leave detail ───────────────────────────────
 
 export const getLeaveById = async (req: Request, res: Response) => {
+  if (!req.user) return res.status(401).json({ success: false, message: "Unauthorized" });
+
   try {
     const leave = await Leave.findById(req.params.id)
       .populate("user", "name employeeId department role employeeType activeMode")
@@ -384,6 +386,14 @@ export const getLeaveById = async (req: Request, res: Response) => {
 
     if (!leave) {
       return res.status(404).json({ success: false, message: "Leave not found" });
+    }
+
+    // Employees may only view their own leaves
+    if (req.user.role === "employee") {
+      const leaveUserId = (leave.user as any)?._id?.toString() ?? (leave.user as any)?.toString();
+      if (leaveUserId !== req.user._id.toString()) {
+        return res.status(404).json({ success: false, message: "Leave not found" });
+      }
     }
 
     res.status(200).json({ success: true, data: leave });

@@ -37,7 +37,8 @@ router.patch("/approve", protect, authorize("hr", "manager", "admin", "super_man
 router.put("/:id/status", protect, authorize("admin", "super_manager", "hr", "manager"), updateLeaveStatus);
 
 // ── Single leave detail ───────────────────────────────────────────────────────
-router.get("/:id", protect, authorize("admin", "super_manager", "hr", "manager"), getLeaveById);
+// employees can view their own leave; managers/HR/admin can view any
+router.get("/:id", protect, authorize("admin", "super_manager", "hr", "manager", "employee"), getLeaveById);
 
 // ── Delete ────────────────────────────────────────────────────────────────────
 router.delete("/:id", protect, authorize("admin", "super_manager", "hr"), deleteLeave);

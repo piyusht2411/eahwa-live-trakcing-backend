@@ -21,7 +21,8 @@ router.get("/", auth_1.protect, (0, auth_1.authorize)("admin", "super_manager", 
 router.patch("/approve", auth_1.protect, (0, auth_1.authorize)("hr", "manager", "admin", "super_manager"), leaveController_1.approveLeave);
 router.put("/:id/status", auth_1.protect, (0, auth_1.authorize)("admin", "super_manager", "hr", "manager"), leaveController_1.updateLeaveStatus);
 // ── Single leave detail ───────────────────────────────────────────────────────
-router.get("/:id", auth_1.protect, (0, auth_1.authorize)("admin", "super_manager", "hr", "manager"), leaveController_1.getLeaveById);
+// employees can view their own leave; managers/HR/admin can view any
+router.get("/:id", auth_1.protect, (0, auth_1.authorize)("admin", "super_manager", "hr", "manager", "employee"), leaveController_1.getLeaveById);
 // ── Delete ────────────────────────────────────────────────────────────────────
 router.delete("/:id", auth_1.protect, (0, auth_1.authorize)("admin", "super_manager", "hr"), leaveController_1.deleteLeave);
 exports.default = router;

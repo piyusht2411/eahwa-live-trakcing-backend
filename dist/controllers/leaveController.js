@@ -336,6 +336,9 @@ const getLeaveHistory = (req, res) => __awaiter(void 0, void 0, void 0, function
 exports.getLeaveHistory = getLeaveHistory;
 // ─── GET /api/leaves/:id — Single leave detail ───────────────────────────────
 const getLeaveById = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    var _a, _b, _c, _d;
+    if (!req.user)
+        return res.status(401).json({ success: false, message: "Unauthorized" });
     try {
         const leave = yield leave_1.default.findById(req.params.id)
             .populate("user", "name employeeId department role employeeType activeMode")
@@ -343,6 +346,13 @@ const getLeaveById = (req, res) => __awaiter(void 0, void 0, void 0, function* (
             .lean();
         if (!leave) {
             return res.status(404).json({ success: false, message: "Leave not found" });
+        }
+        // Employees may only view their own leaves
+        if (req.user.role === "employee") {
+            const leaveUserId = (_c = (_b = (_a = leave.user) === null || _a === void 0 ? void 0 : _a._id) === null || _b === void 0 ? void 0 : _b.toString()) !== null && _c !== void 0 ? _c : (_d = leave.user) === null || _d === void 0 ? void 0 : _d.toString();
+            if (leaveUserId !== req.user._id.toString()) {
+                return res.status(404).json({ success: false, message: "Leave not found" });
+            }
         }
         res.status(200).json({ success: true, data: leave });
     }
