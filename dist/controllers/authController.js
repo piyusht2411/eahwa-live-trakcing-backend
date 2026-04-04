@@ -12,7 +12,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.login = exports.register = void 0;
+exports.login = exports.updateFcmToken = exports.register = void 0;
 const bcrypt_1 = __importDefault(require("bcrypt"));
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const multer_1 = __importDefault(require("multer"));
@@ -102,6 +102,17 @@ exports.register = [
         }
     }),
 ];
+const updateFcmToken = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    if (!req.user)
+        return res.status(401).json({ message: "Unauthorized" });
+    const { fcmToken } = req.body;
+    if (!fcmToken || typeof fcmToken !== "string") {
+        return res.status(400).json({ message: "fcmToken required" });
+    }
+    yield user_1.default.findByIdAndUpdate(req.user._id, { fcmToken });
+    res.json({ success: true });
+});
+exports.updateFcmToken = updateFcmToken;
 const login = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     var _a, _b, _c;
     const { userName, password, fcmToken } = req.body;

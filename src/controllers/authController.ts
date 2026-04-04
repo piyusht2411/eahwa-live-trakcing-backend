@@ -6,6 +6,7 @@ import multer from "multer";
 import cloudinary from "../config/cloudinary";
 import User from "../models/user";
 import Performance from "../models/performance";
+import { AuthRequest } from "../types/authRequest";
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -116,6 +117,16 @@ export const register = [
     }
   },
 ];
+
+export const updateFcmToken = async (req: AuthRequest, res: Response) => {
+  if (!req.user) return res.status(401).json({ message: "Unauthorized" });
+  const { fcmToken } = req.body;
+  if (!fcmToken || typeof fcmToken !== "string") {
+    return res.status(400).json({ message: "fcmToken required" });
+  }
+  await User.findByIdAndUpdate(req.user._id, { fcmToken });
+  res.json({ success: true });
+};
 
 export const login = async (req: Request, res: Response) => {
   const { userName, password, fcmToken } = req.body;
