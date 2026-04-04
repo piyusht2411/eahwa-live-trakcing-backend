@@ -1,18 +1,18 @@
 "use strict";
-var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function (o, m, k, k2) {
     if (k2 === undefined) k2 = k;
     var desc = Object.getOwnPropertyDescriptor(m, k);
     if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
-      desc = { enumerable: true, get: function() { return m[k]; } };
+        desc = { enumerable: true, get: function () { return m[k]; } };
     }
     Object.defineProperty(o, k2, desc);
-}) : (function(o, m, k, k2) {
+}) : (function (o, m, k, k2) {
     if (k2 === undefined) k2 = k;
     o[k2] = m[k];
 }));
-var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function (o, v) {
     Object.defineProperty(o, "default", { enumerable: true, value: v });
-}) : function(o, v) {
+}) : function (o, v) {
     o["default"] = v;
 });
 var __importStar = (this && this.__importStar) || function (mod) {
@@ -93,10 +93,10 @@ if (!admin.apps.length) {
 var corsOptions = {
     origin: [
         "http://localhost:3000",
-        "https://eashwa-frontend-iptp.vercel.app",
-        "https://eashwastock.in",
-        "https://www.eashwastock.in",
-        "https://eashwa-live-tracking-admin.vercel.app",
+        "https://test-frontend-iptp.vercel.app",
+        "https://teststock.in",
+        "https://www.teststock.in",
+        "https://test-live-tracking-admin.vercel.app",
         "https://chilweeindia.com",
         "https://www.chilweeindia.com"
     ],

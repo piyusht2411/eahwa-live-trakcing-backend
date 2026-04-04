@@ -18,7 +18,7 @@ const nodemailer_1 = __importDefault(require("nodemailer"));
 const sendMail = (email, mailSubject, body) => {
     const mailData = {
         from: {
-            name: 'E-Ashwa',
+            name: 'test',
             address: process.env.NODE_EMAIL
         },
         to: email,
