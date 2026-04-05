@@ -71,10 +71,10 @@ async function _googleRoadDistance(coords: GpsPoint[]): Promise<number> {
     const CHUNK_SIZE = 100;
     const allSnapped: { lat: number; lng: number }[] = [];
 
-    for (let i = 0; i < coords.length; i += CHUNK_SIZE) {
+    for (let i = 0; i < coords.length - 1; i += CHUNK_SIZE - 1) {
       const chunk = coords.slice(i, i + CHUNK_SIZE);
       const path = chunk.map(p => `${p.lat},${p.lng}`).join("|");
-      const url = `https://roads.googleapis.com/v1/snapToRoads?path=${path}&interpolate=true&key=${GOOGLE_ROADS_API_KEY}`;
+      const url = `https://roads.googleapis.com/v1/snapToRoads?path=${path}&interpolate=false&key=${GOOGLE_ROADS_API_KEY}`;
 
       const res = await fetch(url, { signal: AbortSignal.timeout(15000) });
       const data: any = await res.json();
