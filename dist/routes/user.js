@@ -4,7 +4,7 @@ const express_1 = require("express");
 const userController_1 = require("../controllers/userController");
 const auth_1 = require("../middleware/auth");
 const router = (0, express_1.Router)();
-router.get("/", auth_1.protect, (0, auth_1.authorize)("admin", "super_manager", "hr"), userController_1.getAllUsers);
+router.get("/", auth_1.protect, (0, auth_1.authorize)("admin", "super_manager", "hr", "manager"), userController_1.getAllUsers);
 router.get("/managers", userController_1.getAdminsAndManagers);
 router.get("/home-locations", auth_1.protect, (0, auth_1.authorize)("admin", "super_manager", "hr", "manager"), userController_1.getUsersHomeLocations);
 router.patch("/me/active-mode", auth_1.protect, userController_1.switchActiveMode);

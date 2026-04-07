@@ -3,7 +3,7 @@ import { deleteUser, getAdminsAndManagers, getAllUsers, getUserById, updateUser,
 import { protect, authorize } from "../middleware/auth";
 
 const router = Router();
-router.get("/", protect, authorize("admin", "super_manager", "hr"), getAllUsers);
+router.get("/", protect, authorize("admin", "super_manager", "hr", "manager"), getAllUsers);
 router.get("/managers", getAdminsAndManagers);
 router.get("/home-locations", protect, authorize("admin", "super_manager", "hr", "manager"), getUsersHomeLocations);
 router.patch("/me/active-mode", protect, switchActiveMode);

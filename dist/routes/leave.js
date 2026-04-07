@@ -14,9 +14,9 @@ router.get("/my", auth_1.protect, (0, auth_1.authorize)("employee", "manager", "
 router.get("/team/members", auth_1.protect, (0, auth_1.authorize)("manager"), leaveController_1.getTeamMembers);
 router.get("/team", auth_1.protect, (0, auth_1.authorize)("manager"), leaveController_1.getTeamLeaves);
 // ── HR / Admin filter dropdown ────────────────────────────────────────────────
-router.get("/employees", auth_1.protect, (0, auth_1.authorize)("admin", "super_manager", "hr"), leaveController_1.getAllEmployeesForFilter);
+router.get("/employees", auth_1.protect, (0, auth_1.authorize)("admin", "super_manager", "hr", "manager"), leaveController_1.getAllEmployeesForFilter);
 // ── Admin / Super Manager / HR: all leaves ────────────────────────────────────
-router.get("/", auth_1.protect, (0, auth_1.authorize)("admin", "super_manager", "hr"), leaveController_1.getAllLeaves);
+router.get("/", auth_1.protect, (0, auth_1.authorize)("admin", "super_manager", "hr", "manager"), leaveController_1.getAllLeaves);
 // ── Leave approval ────────────────────────────────────────────────────────────
 router.patch("/approve", auth_1.protect, (0, auth_1.authorize)("hr", "manager", "admin", "super_manager"), leaveController_1.approveLeave);
 router.put("/:id/status", auth_1.protect, (0, auth_1.authorize)("admin", "super_manager", "hr", "manager"), leaveController_1.updateLeaveStatus);
@@ -24,5 +24,5 @@ router.put("/:id/status", auth_1.protect, (0, auth_1.authorize)("admin", "super_
 // employees can view their own leave; managers/HR/admin can view any
 router.get("/:id", auth_1.protect, (0, auth_1.authorize)("admin", "super_manager", "hr", "manager", "employee"), leaveController_1.getLeaveById);
 // ── Delete ────────────────────────────────────────────────────────────────────
-router.delete("/:id", auth_1.protect, (0, auth_1.authorize)("admin", "super_manager", "hr"), leaveController_1.deleteLeave);
+router.delete("/:id", auth_1.protect, (0, auth_1.authorize)("admin", "super_manager", "hr", "manager"), leaveController_1.deleteLeave);
 exports.default = router;
