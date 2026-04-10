@@ -107,6 +107,97 @@ export const getAllUsers = async (req: Request, res: Response) => {
     }
 };
 
+// GET /api/users/my-team  (admin/super_manager/hr → all users; manager → only their employees)
+export const getMyTeamUsers = async (req: Request, res: Response) => {
+    try {
+        const { search, page = "1", limit = "10" } = req.query;
+        const authUser = req.user!;
+
+        const query: any = {};
+
+        // Managers only see employees assigned to them
+        const adminRoles = ["admin", "super_manager", "hr"];
+        if (!adminRoles.includes(authUser.role)) {
+            query.managedBy = authUser._id;
+        }
+
+        if (search) {
+            query.$or = [
+                { name: { $regex: search, $options: "i" } },
+                { employeeId: { $regex: search, $options: "i" } },
+                { email: { $regex: search, $options: "i" } }
+            ];
+        }
+
+        const pageNumber = parseInt(page as string, 10) || 1;
+        const limitNumber = parseInt(limit as string, 10) || 10;
+        const skip = (pageNumber - 1) * limitNumber;
+
+        const users = await User.find(query)
+            .select("-password")
+            .skip(skip)
+            .limit(limitNumber)
+            .sort({ createdAt: -1 })
+            .lean();
+
+        const total = await User.countDocuments(query);
+        const userIds = users.map((u: any) => u._id);
+        const { start, end } = getTodayRange();
+
+        const punchesToday = await Punch.find({ user: { $in: userIds }, date: { $gte: start, $lte: end } })
+            .sort({ time: 1 })
+            .lean();
+
+        const latestLogs = await LocationLog.aggregate([
+            { $match: { user: { $in: userIds }, timestamp: { $gte: start } } },
+            { $sort: { timestamp: -1 } },
+            { $group: { _id: "$user", timestamp: { $first: "$timestamp" }, location: { $first: "$location" } } },
+        ]);
+
+        const punchMap = new Map<string, { isPunchedIn: boolean; punchInTime: Date | null; punchOutTime: Date | null }>();
+        for (const uid of userIds) {
+            const userPunches = punchesToday.filter(p => p.user.toString() === uid.toString());
+            const firstIn = userPunches.find(p => p.type === "in");
+            const lastOut = [...userPunches].reverse().find(p => p.type === "out");
+            const last = userPunches[userPunches.length - 1];
+            punchMap.set(uid.toString(), {
+                isPunchedIn: last?.type === "in" || false,
+                punchInTime: firstIn?.time || null,
+                punchOutTime: lastOut?.time || null,
+            });
+        }
+
+        const locationMap = new Map<string, { lat: number; lng: number; timestamp: Date }>();
+        for (const l of latestLogs) {
+            locationMap.set(l._id.toString(), { ...l.location, timestamp: l.timestamp });
+        }
+
+        const now = Date.now();
+        const data = users.map((u: any) => {
+            const uid = u._id.toString();
+            const punch = punchMap.get(uid);
+            const loc = locationMap.get(uid);
+            return {
+                ...u,
+                isPunchedIn: punch?.isPunchedIn ?? false,
+                punchInTime: punch?.punchInTime ?? null,
+                punchOutTime: punch?.punchOutTime ?? null,
+                lastLocation: loc ? { lat: loc.lat, lng: loc.lng, timestamp: loc.timestamp } : null,
+                locationSharingActive: loc ? (now - new Date(loc.timestamp).getTime()) < LOCATION_ACTIVE_THRESHOLD_MS : false,
+            };
+        });
+
+        res.status(200).json({
+            success: true,
+            data,
+            pagination: { total, page: pageNumber, pages: Math.ceil(total / limitNumber) }
+        });
+    } catch (error) {
+        console.error("Get my team users error:", error);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+};
+
 // GET /api/users/:id
 export const getUserById = async (req: Request, res: Response) => {
     try {
