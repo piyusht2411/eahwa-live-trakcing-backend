@@ -307,18 +307,27 @@ const getVisits = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
                 taskDistanceMap[task._id.toString()] = yield (0, healper_1.getRoadDistance)(coords);
             }
         })));
+        // Helper: convert a UTC Date to IST (UTC+5:30) and return { date: "YYYY-MM-DD", time: "HH:MM" }
+        const toIST = (utcDate) => {
+            const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000; // +05:30 in ms
+            const istDate = new Date(utcDate.getTime() + IST_OFFSET_MS);
+            const iso = istDate.toISOString(); // now represents IST wall-clock in UTC form
+            return {
+                date: iso.split("T")[0], // "YYYY-MM-DD" in IST
+                time: iso.split("T")[1].slice(0, 5), // "HH:MM"      in IST
+            };
+        };
         let data = tasks.map((task) => {
             var _a, _b, _c;
             const user = task.user || {};
             const manager = user.managedBy || {};
-            const d = new Date(task.date);
-            const dateStr = d.toISOString().split("T")[0];
+            const { date: visitDate, time: visitTime } = toIST(new Date(task.date));
             return {
                 _id: task._id,
                 employeeName: user.name || "Unknown",
                 managerName: manager.name || "Unknown",
-                visitDate: dateStr,
-                visitTime: d.toTimeString().slice(0, 5),
+                visitDate,
+                visitTime,
                 showroomName: task.showroomName,
                 address: ((_a = task.address) === null || _a === void 0 ? void 0 : _a.fullAddress) || "",
                 timeSpent: task.duration || 0,

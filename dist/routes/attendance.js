@@ -4,6 +4,6 @@ const express_1 = require("express");
 const attendanceController_1 = require("../controllers/attendanceController");
 const auth_1 = require("../middleware/auth");
 const router = (0, express_1.Router)();
-router.get("/", auth_1.protect, (0, auth_1.authorize)("admin", "hr", "manager"), attendanceController_1.getAttendance);
+router.get("/", auth_1.protect, (0, auth_1.authorize)("admin", "super_manager", "hr", "manager"), attendanceController_1.getAttendance);
 router.get("/:userId", attendanceController_1.getUserAttendance);
 exports.default = router;

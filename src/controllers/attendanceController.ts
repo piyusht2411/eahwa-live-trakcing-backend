@@ -15,17 +15,44 @@ export const getAttendance = async (req: Request, res: Response) => {
             limit = "20"
         } = req.query;
 
+        const authUser = req.user!;
+        const adminRoles = ["admin", "super_manager", "hr"];
+        const isAdminLevel = adminRoles.includes(authUser.role);
+
         // ====================== Pagination ======================
         const currentPage = Math.max(1, parseInt(page as string) || 1);
         const pageSize = Math.min(100, Math.max(1, parseInt(limit as string) || 20)); // max 100 per page
 
+        // ====================== Resolve allowed user IDs for managers ======================
+        // Managers only see attendance of employees they manage.
+        // Admin / super_manager / hr see everyone.
+        let allowedUserIds: Types.ObjectId[] | null = null; // null = no restriction
+
+        if (!isAdminLevel) {
+            // Manager: fetch only their direct reports
+            const teamMembers = await User.find(
+                { managedBy: authUser._id, isActive: true },
+                { _id: 1, name: 1, employeeId: 1 }
+            ).lean();
+            allowedUserIds = teamMembers.map((u: any) => u._id as Types.ObjectId);
+        }
+
         // ====================== User Filter ======================
         const userFilter: Record<string, any> = {};
+
         if (userId && typeof userId === "string") {
             if (!Types.ObjectId.isValid(userId)) {
                 return res.status(400).json({ success: false, message: "Invalid userId" });
             }
-            userFilter.user = new Types.ObjectId(userId);
+            const requestedId = new Types.ObjectId(userId);
+            // If manager, make sure the requested userId is within their team
+            if (allowedUserIds !== null && !allowedUserIds.some(id => id.equals(requestedId))) {
+                return res.status(403).json({ success: false, message: "Access denied: user not in your team" });
+            }
+            userFilter.user = requestedId;
+        } else if (allowedUserIds !== null) {
+            // No specific userId requested → restrict to manager's team
+            userFilter.user = { $in: allowedUserIds };
         }
 
         // ====================== Date Filtering Logic ======================
@@ -60,10 +87,16 @@ export const getAttendance = async (req: Request, res: Response) => {
 
         const query = { ...userFilter, date: { $gte: startDate, $lte: endDate } };
 
+        // ====================== Dropdown users (scoped by role) ======================
+        const usersQuery: Record<string, any> = { isActive: true };
+        if (allowedUserIds !== null) {
+            usersQuery._id = { $in: allowedUserIds };
+        }
+
         // ====================== Count Total Records + Fetch Users ======================
         const [totalRecords, users] = await Promise.all([
             Punch.countDocuments(query),
-            User.find({ isActive: true }, { _id: 1, name: 1, employeeId: 1 }).lean(),
+            User.find(usersQuery, { _id: 1, name: 1, employeeId: 1 }).lean(),
         ]);
 
         // ====================== Fetch Paginated & Sorted Data ======================
