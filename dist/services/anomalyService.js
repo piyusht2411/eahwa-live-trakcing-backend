@@ -63,7 +63,18 @@ const detectAnomalies = (userId, log) => __awaiter(void 0, void 0, void 0, funct
         recentPunches[0].type === "in" &&
         recentPunches[0].location.lat === recentPunches[1].location.lat &&
         recentPunches[0].location.lng === recentPunches[1].location.lng) {
-        yield logAnomaly(userId, employeeName, "repeated_punch", "Punch-in detected from the same location twice", true);
+        // Dedup: only alert once per day — this check runs on every location ping
+        // so without a guard it fires every ~1 minute for the entire day.
+        const todayStart = new Date();
+        todayStart.setHours(0, 0, 0, 0);
+        const alreadyLogged = yield anomaly_1.default.findOne({
+            user: userId,
+            type: "repeated_punch",
+            createdAt: { $gte: todayStart },
+        }).lean();
+        if (!alreadyLogged) {
+            yield logAnomaly(userId, employeeName, "repeated_punch", "Punch-in detected from the same location twice", true);
+        }
     }
     // ── Unrealistic speed ───────────────────────────────────────────────────────
     if (recentLogs.length > 1) {
