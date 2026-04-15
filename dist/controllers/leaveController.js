@@ -251,9 +251,11 @@ const getAllLeaves = (req, res) => __awaiter(void 0, void 0, void 0, function* (
             leave_1.default.countDocuments(query),
             leave_1.default.find(query).select("type status shortLeaveDuration").lean(),
         ]);
+        // Filter out leaves whose user was deleted (populate returns null for missing refs)
+        const validLeaves = leaves.filter((l) => l.user != null);
         res.status(200).json({
             success: true,
-            data: leaves,
+            data: validLeaves,
             summary: buildSummary(allForSummary),
             pagination: {
                 total,
@@ -305,9 +307,11 @@ const getTeamLeaves = (req, res) => __awaiter(void 0, void 0, void 0, function* 
             leave_1.default.countDocuments(query),
             leave_1.default.find(query).select("type status shortLeaveDuration").lean(),
         ]);
+        // Filter out leaves whose user was deleted (populate returns null for missing refs)
+        const validLeaves = leaves.filter((l) => l.user != null);
         res.status(200).json({
             success: true,
-            data: leaves,
+            data: validLeaves,
             summary: buildSummary(allForSummary),
             pagination: {
                 total,
@@ -341,6 +345,7 @@ const getLeaveHistory = (req, res) => __awaiter(void 0, void 0, void 0, function
         const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
         const [leaves, total, allForSummary, monthlyShortLeaves] = yield Promise.all([
             leave_1.default.find(query)
+                .populate("approvedBy", "name role") // so employee can see who approved/rejected
                 .sort({ createdAt: -1 })
                 .skip(skip)
                 .limit(limitNum)

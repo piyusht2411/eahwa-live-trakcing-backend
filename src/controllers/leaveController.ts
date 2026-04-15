@@ -289,9 +289,12 @@ export const getAllLeaves = async (req: Request, res: Response) => {
       Leave.find(query).select("type status shortLeaveDuration").lean(),
     ]);
 
+    // Filter out leaves whose user was deleted (populate returns null for missing refs)
+    const validLeaves = leaves.filter((l: any) => l.user != null);
+
     res.status(200).json({
       success: true,
-      data: leaves,
+      data: validLeaves,
       summary: buildSummary(allForSummary),
       pagination: {
         total,
@@ -348,9 +351,12 @@ export const getTeamLeaves = async (req: Request, res: Response) => {
       Leave.find(query).select("type status shortLeaveDuration").lean(),
     ]);
 
+    // Filter out leaves whose user was deleted (populate returns null for missing refs)
+    const validLeaves = leaves.filter((l: any) => l.user != null);
+
     res.status(200).json({
       success: true,
-      data: leaves,
+      data: validLeaves,
       summary: buildSummary(allForSummary),
       pagination: {
         total,
@@ -387,6 +393,7 @@ export const getLeaveHistory = async (req: Request, res: Response) => {
 
     const [leaves, total, allForSummary, monthlyShortLeaves] = await Promise.all([
       Leave.find(query)
+        .populate("approvedBy", "name role") // so employee can see who approved/rejected
         .sort({ createdAt: -1 })
         .skip(skip)
         .limit(limitNum)

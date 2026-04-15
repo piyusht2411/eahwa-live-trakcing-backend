@@ -7,8 +7,8 @@ const auth_1 = require("../middleware/auth");
 const router = (0, express_1.Router)();
 // ── Employee actions ──────────────────────────────────────────────────────────
 // Any employee-type role can request and view their own leaves
-router.post("/", auth_1.protect, (0, auth_1.authorize)("employee", "manager", "hr"), leaveController_1.requestLeave);
-router.get("/my", auth_1.protect, (0, auth_1.authorize)("employee", "manager", "hr"), leaveController_1.getLeaveHistory);
+router.post("/", auth_1.protect, (0, auth_1.authorize)("employee", "manager", "hr", "super_manager"), leaveController_1.requestLeave);
+router.get("/my", auth_1.protect, (0, auth_1.authorize)("employee", "manager", "hr", "super_manager"), leaveController_1.getLeaveHistory);
 // ── Manager-specific ──────────────────────────────────────────────────────────
 // Must be above /:id to avoid route collision
 router.get("/team/members", auth_1.protect, (0, auth_1.authorize)("manager"), leaveController_1.getTeamMembers);

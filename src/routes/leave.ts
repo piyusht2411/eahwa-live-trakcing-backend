@@ -18,8 +18,8 @@ const router = Router();
 
 // ── Employee actions ──────────────────────────────────────────────────────────
 // Any employee-type role can request and view their own leaves
-router.post("/", protect, authorize("employee", "manager", "hr"), requestLeave);
-router.get("/my", protect, authorize("employee", "manager", "hr"), getLeaveHistory);
+router.post("/", protect, authorize("employee", "manager", "hr", "super_manager"), requestLeave);
+router.get("/my", protect, authorize("employee", "manager", "hr", "super_manager"), getLeaveHistory);
 
 // ── Manager-specific ──────────────────────────────────────────────────────────
 // Must be above /:id to avoid route collision
