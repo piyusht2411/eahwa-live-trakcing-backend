@@ -36,8 +36,8 @@ const calculateSpeed = (log1: any, log2: any): number => {
   const a =
     Math.sin(dLat / 2) ** 2 +
     Math.cos((log2.location.lat * Math.PI) / 180) *
-      Math.cos((log1.location.lat * Math.PI) / 180) *
-      Math.sin(dLon / 2) ** 2;
+    Math.cos((log1.location.lat * Math.PI) / 180) *
+    Math.sin(dLon / 2) ** 2;
   const distanceKm = 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
   const deltaHours =
     Math.abs(
@@ -62,32 +62,32 @@ export const detectAnomalies = async (userId: string, log: any) => {
   ]);
 
   // ── Repeated punch at same location ────────────────────────────────────────
-  if (
-    recentPunches.length > 1 &&
-    recentPunches[0].type === "in" &&
-    recentPunches[0].location.lat === recentPunches[1].location.lat &&
-    recentPunches[0].location.lng === recentPunches[1].location.lng
-  ) {
-    // Dedup: only alert once per day — this check runs on every location ping
-    // so without a guard it fires every ~1 minute for the entire day.
-    const todayStart = new Date();
-    todayStart.setHours(0, 0, 0, 0);
-    const alreadyLogged = await Anomaly.findOne({
-      user: userId,
-      type: "repeated_punch",
-      createdAt: { $gte: todayStart },
-    }).lean();
+  // if (
+  //   recentPunches.length > 1 &&
+  //   recentPunches[0].type === "in" &&
+  //   recentPunches[0].location.lat === recentPunches[1].location.lat &&
+  //   recentPunches[0].location.lng === recentPunches[1].location.lng
+  // ) {
+  //   // Dedup: only alert once per day — this check runs on every location ping
+  //   // so without a guard it fires every ~1 minute for the entire day.
+  //   const todayStart = new Date();
+  //   todayStart.setHours(0, 0, 0, 0);
+  //   const alreadyLogged = await Anomaly.findOne({
+  //     user: userId,
+  //     type: "repeated_punch",
+  //     createdAt: { $gte: todayStart },
+  //   }).lean();
 
-    if (!alreadyLogged) {
-      await logAnomaly(
-        userId,
-        employeeName,
-        "repeated_punch",
-        "Punch-in detected from the same location twice",
-        true
-      );
-    }
-  }
+  //   if (!alreadyLogged) {
+  //     await logAnomaly(
+  //       userId,
+  //       employeeName,
+  //       "repeated_punch",
+  //       "Punch-in detected from the same location twice",
+  //       true
+  //     );
+  //   }
+  // }
 
   // ── Unrealistic speed ───────────────────────────────────────────────────────
   if (recentLogs.length > 1) {
@@ -108,8 +108,8 @@ export const detectAnomalies = async (userId: string, log: any) => {
       const a =
         Math.sin(dLat / 2) ** 2 +
         Math.cos((lat2 * Math.PI) / 180) *
-          Math.cos((lat1 * Math.PI) / 180) *
-          Math.sin(dLon / 2) ** 2;
+        Math.cos((lat1 * Math.PI) / 180) *
+        Math.sin(dLon / 2) ** 2;
       const distKm = 2 * R * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
       // Skip if distance is within GPS noise range — avoids jitter false positives
       if (distKm < 0.5) {
