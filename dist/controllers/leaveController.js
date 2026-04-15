@@ -21,20 +21,37 @@ const notificationService_1 = require("../services/notificationService");
  * Build leave summary stats from a list of leave documents.
  * "Taken" counts only approved leaves; pending/rejected are tracked separately.
  */
-const buildSummary = (leaves) => {
+/**
+ * Build leave summary stats.
+ * - Casual / half-day counts are all-time.
+ * - shortLeaveHours & shortLeaveHoursThisMonth are scoped to the CURRENT MONTH
+ *   because the 2-hour allowance resets monthly. Rejected leaves count as 0.
+ */
+const buildSummary = (leaves, monthlyShortLeaves) => {
     const approved = leaves.filter((l) => l.status === "approved");
     const pending = leaves.filter((l) => l.status === "pending");
     const rejected = leaves.filter((l) => l.status === "rejected");
+    // Monthly short leave hours — use the dedicated monthly list if provided,
+    // otherwise fall back to the full list (for admin/manager views).
+    const shortSource = monthlyShortLeaves !== null && monthlyShortLeaves !== void 0 ? monthlyShortLeaves : leaves;
+    const shortLeaveHours = shortSource
+        .filter((l) => l.type === "short" && l.status === "approved")
+        .reduce((sum, l) => sum + (l.shortLeaveDuration || 0), 0);
+    const shortLeavePendingHours = shortSource
+        .filter((l) => l.type === "short" && l.status === "pending")
+        .reduce((sum, l) => sum + (l.shortLeaveDuration || 0), 0);
     return {
         total: leaves.length,
         totalPending: pending.length,
         totalApproved: approved.length,
         totalRejected: rejected.length,
         casualTaken: approved.filter((l) => l.type === "casual").length,
-        shortLeaveHours: approved
-            .filter((l) => l.type === "short")
-            .reduce((sum, l) => sum + (l.shortLeaveDuration || 0), 0),
         halfDayTaken: approved.filter((l) => l.type === "half-day").length,
+        // Short leave — monthly scope, approved only
+        shortLeaveHours,
+        shortLeavePendingHours,
+        shortLeaveAllowance: 2, // max hours allowed per month
+        shortLeaveRemaining: Math.max(0, 2 - shortLeaveHours),
     };
 };
 /** Parse and apply common leave list filters to a mongoose query object. */
@@ -88,19 +105,30 @@ const requestLeave = (req, res) => __awaiter(void 0, void 0, void 0, function* (
                     message: "shortLeaveDuration must be 1 or 2 hours",
                 });
             }
-            // Max 1 short leave per month
+            // Max 2 hours of short leave per month (pending + approved combined).
+            // Rejected leaves do NOT count — the employee can re-apply.
             const requestDate = new Date(date);
             const monthStart = new Date(requestDate.getFullYear(), requestDate.getMonth(), 1);
             const monthEnd = new Date(requestDate.getFullYear(), requestDate.getMonth() + 1, 0, 23, 59, 59, 999);
-            const existingShortLeave = yield leave_1.default.findOne({
+            const SHORT_LEAVE_ALLOWANCE = 2; // hours per month
+            const activeShortLeaves = yield leave_1.default.find({
                 user: userId,
                 type: "short",
+                status: { $in: ["pending", "approved"] },
                 date: { $gte: monthStart, $lte: monthEnd },
-            });
-            if (existingShortLeave) {
+            }).select("shortLeaveDuration status").lean();
+            const usedHours = activeShortLeaves.reduce((sum, l) => sum + (l.shortLeaveDuration || 0), 0);
+            const remainingHours = SHORT_LEAVE_ALLOWANCE - usedHours;
+            if (duration > remainingHours) {
+                if (remainingHours <= 0) {
+                    return res.status(400).json({
+                        success: false,
+                        message: `You have used all ${SHORT_LEAVE_ALLOWANCE} short leave hours for this month`,
+                    });
+                }
                 return res.status(400).json({
                     success: false,
-                    message: "You have already used your short leave for this month",
+                    message: `Only ${remainingHours} hour(s) of short leave remaining this month. You requested ${duration} hour(s).`,
                 });
             }
         }
@@ -306,7 +334,12 @@ const getLeaveHistory = (req, res) => __awaiter(void 0, void 0, void 0, function
         const skip = (pageNum - 1) * limitNum;
         const query = yield buildLeaveQuery(req.query);
         query.user = req.user._id; // always scoped to the requesting user
-        const [leaves, total, allForSummary] = yield Promise.all([
+        // Scope short leave hours to the current month (allowance resets monthly).
+        // All-time query is still used for casual/half-day totals.
+        const now = new Date();
+        const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+        const monthEnd = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59, 999);
+        const [leaves, total, allForSummary, monthlyShortLeaves] = yield Promise.all([
             leave_1.default.find(query)
                 .sort({ createdAt: -1 })
                 .skip(skip)
@@ -314,12 +347,17 @@ const getLeaveHistory = (req, res) => __awaiter(void 0, void 0, void 0, function
                 .lean(),
             leave_1.default.countDocuments(query),
             leave_1.default.find({ user: req.user._id }).select("type status shortLeaveDuration").lean(),
+            leave_1.default.find({
+                user: req.user._id,
+                type: "short",
+                date: { $gte: monthStart, $lte: monthEnd },
+            }).select("type status shortLeaveDuration").lean(),
         ]);
         res.status(200).json({
             success: true,
             data: leaves,
-            // Summary is always for ALL time (not just filtered page) so the employee sees their full balance
-            summary: buildSummary(allForSummary),
+            // All-time totals + current-month short leave balance
+            summary: buildSummary(allForSummary, monthlyShortLeaves),
             pagination: {
                 total,
                 page: pageNum,

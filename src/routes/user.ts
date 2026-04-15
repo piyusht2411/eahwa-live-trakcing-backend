@@ -11,6 +11,6 @@ router.patch("/me/active-mode", protect, switchActiveMode);
 router.get("/:id/travel-history", protect, authorize("admin", "super_manager", "hr", "manager"), getUserTravelHistory);
 router.get("/:id", protect, authorize("admin", "super_manager", "hr", "manager"), getUserById);
 router.put("/:id", protect, authorize("admin", "super_manager", "hr", "manager"), updateUser);
-router.delete("/:id", protect, authorize("admin"), deleteUser);
+router.delete("/:id", protect, authorize("admin", "super_manager", "manager", "hr"), deleteUser);
 
 export default router;
