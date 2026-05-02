@@ -11,6 +11,7 @@ import LocationLog from "../models/locationlogs";
 import { getRoadDistance } from "../utils/healper";
 import Alert from "../models/alert";
 import { sendAnomalyAlert } from "../services/notificationService";
+import Performance from "../models/performance";
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -91,7 +92,7 @@ export const punch = [
 
           const distanceKm = await getRoadDistance(coords);
 
-          // Upsert today's entry in travelHistory
+          // ── Persist distance in User.travelHistory (primary long-lived store) ──
           await User.findOneAndUpdate(
             { _id: userId, "travelHistory.date": today },
             { $set: { "travelHistory.$.distanceKm": distanceKm } }
@@ -102,6 +103,24 @@ export const punch = [
               });
             }
           });
+
+          // ── Also persist in Performance (daily) so reports never lose distance ──
+          // This is a secondary store independent of the LocationLog TTL.
+          const perfEndOfDay = new Date(today);
+          perfEndOfDay.setHours(23, 59, 59, 999);
+          await Performance.findOneAndUpdate(
+            { user: userId, period: "daily", periodStart: today },
+            {
+              $set: { "metrics.distanceKm": distanceKm },
+              // $setOnInsert only runs when MongoDB creates a NEW document (upsert).
+              // Required schema fields must be provided so validation doesn't fail.
+              $setOnInsert: { periodEnd: perfEndOfDay, score: 0 },
+            },
+            { upsert: true }
+          ).catch((err: any) =>
+            // Non-fatal: travelHistory is already saved; don't block the response.
+            console.error("[Punch Out] Failed to persist distance to Performance:", err)
+          );
         } catch (err) {
           console.error("[Punch Out] Failed to save travel distance:", err);
         }

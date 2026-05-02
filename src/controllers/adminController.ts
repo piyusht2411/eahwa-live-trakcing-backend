@@ -320,7 +320,28 @@ export const getEmployeeStats = async (req: AuthRequest, res: Response) => {
         });
 
         let score = performance?.score || 0;
-        let distanceTraveled = performance?.metrics?.distance || 0;
+
+        // ── Distance: 3-tier fallback so it never goes zero after LocationLog TTL ──
+        // Tier 1: Performance.metrics.distanceKm  (written by punch-out, forward-compat)
+        // Tier 2: Performance.metrics.distance    (legacy field, may be a ratio — use if > 1 km as heuristic)
+        // Tier 3: User.travelHistory              (always written on every punch-out)
+        let distanceTraveled: number = performance?.metrics?.distanceKm ?? 0;
+
+        if (!distanceTraveled && performance?.metrics?.distance && performance.metrics.distance > 1) {
+          // Legacy field stored absolute km (not a 0-1 ratio)
+          distanceTraveled = performance.metrics.distance;
+        }
+
+        if (!distanceTraveled) {
+          // Fallback: read from User.travelHistory
+          const userWithHistory = await User.findById(userId)
+            .select("travelHistory")
+            .lean() as any;
+          const historyEntry = (userWithHistory?.travelHistory ?? []).find(
+            (h: any) => new Date(h.date).toDateString() === targetDate.toDateString()
+          );
+          distanceTraveled = historyEntry?.distanceKm ?? 0;
+        }
 
         const tasks = await Task.countDocuments({
             user: userId,
@@ -595,7 +616,10 @@ export const getEmployeeWeeklyHours = async (req: AuthRequest, res: Response) =>
             // Total break hours
             const breakMs = breaks.reduce((sum, b) => sum + (b.duration ?? 0) * 60 * 1000, 0);
 
-            // Idle = gaps > 15 min in location logs during work time
+            // Idle = gaps > 15 min in location logs during work time.
+            // Note: LocationLog has a TTL index — logs older than LOCATION_TTL_DAYS will be
+            // purged by MongoDB. When that happens locationLogs will be empty and idleMs
+            // stays 0 (safe default: productive = workMs - breakMs, no data lost).
             let idleMs = 0;
             if (firstIn && locationLogs.length > 1) {
                 for (let j = 1; j < locationLogs.length; j++) {

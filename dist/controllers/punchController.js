@@ -23,6 +23,7 @@ const locationlogs_1 = __importDefault(require("../models/locationlogs"));
 const healper_1 = require("../utils/healper");
 const alert_1 = __importDefault(require("../models/alert"));
 const notificationService_1 = require("../services/notificationService");
+const performance_1 = __importDefault(require("../models/performance"));
 const upload = (0, multer_1.default)({ storage: multer_1.default.memoryStorage() });
 exports.punch = [
     upload.single("selfie"),
@@ -88,7 +89,7 @@ exports.punch = [
                         timestamp: l.timestamp,
                     }));
                     const distanceKm = yield (0, healper_1.getRoadDistance)(coords);
-                    // Upsert today's entry in travelHistory
+                    // ── Persist distance in User.travelHistory (primary long-lived store) ──
                     yield user_1.default.findOneAndUpdate({ _id: userId, "travelHistory.date": today }, { $set: { "travelHistory.$.distanceKm": distanceKm } }).then((updated) => __awaiter(void 0, void 0, void 0, function* () {
                         if (!updated) {
                             yield user_1.default.findByIdAndUpdate(userId, {
@@ -96,6 +97,18 @@ exports.punch = [
                             });
                         }
                     }));
+                    // ── Also persist in Performance (daily) so reports never lose distance ──
+                    // This is a secondary store independent of the LocationLog TTL.
+                    const perfEndOfDay = new Date(today);
+                    perfEndOfDay.setHours(23, 59, 59, 999);
+                    yield performance_1.default.findOneAndUpdate({ user: userId, period: "daily", periodStart: today }, {
+                        $set: { "metrics.distanceKm": distanceKm },
+                        // $setOnInsert only runs when MongoDB creates a NEW document (upsert).
+                        // Required schema fields must be provided so validation doesn't fail.
+                        $setOnInsert: { periodEnd: perfEndOfDay, score: 0 },
+                    }, { upsert: true }).catch((err) => 
+                    // Non-fatal: travelHistory is already saved; don't block the response.
+                    console.error("[Punch Out] Failed to persist distance to Performance:", err));
                 }
                 catch (err) {
                     console.error("[Punch Out] Failed to save travel distance:", err);

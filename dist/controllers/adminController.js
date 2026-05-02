@@ -278,7 +278,7 @@ const getLocationHistory = (req, res) => __awaiter(void 0, void 0, void 0, funct
 });
 exports.getLocationHistory = getLocationHistory;
 const getEmployeeStats = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
-    var _a;
+    var _a, _b, _c, _d, _e;
     try {
         const { userId } = req.params;
         const { date } = req.query;
@@ -302,7 +302,23 @@ const getEmployeeStats = (req, res) => __awaiter(void 0, void 0, void 0, functio
             periodStart: targetDate
         });
         let score = (performance === null || performance === void 0 ? void 0 : performance.score) || 0;
-        let distanceTraveled = ((_a = performance === null || performance === void 0 ? void 0 : performance.metrics) === null || _a === void 0 ? void 0 : _a.distance) || 0;
+        // ── Distance: 3-tier fallback so it never goes zero after LocationLog TTL ──
+        // Tier 1: Performance.metrics.distanceKm  (written by punch-out, forward-compat)
+        // Tier 2: Performance.metrics.distance    (legacy field, may be a ratio — use if > 1 km as heuristic)
+        // Tier 3: User.travelHistory              (always written on every punch-out)
+        let distanceTraveled = (_b = (_a = performance === null || performance === void 0 ? void 0 : performance.metrics) === null || _a === void 0 ? void 0 : _a.distanceKm) !== null && _b !== void 0 ? _b : 0;
+        if (!distanceTraveled && ((_c = performance === null || performance === void 0 ? void 0 : performance.metrics) === null || _c === void 0 ? void 0 : _c.distance) && performance.metrics.distance > 1) {
+            // Legacy field stored absolute km (not a 0-1 ratio)
+            distanceTraveled = performance.metrics.distance;
+        }
+        if (!distanceTraveled) {
+            // Fallback: read from User.travelHistory
+            const userWithHistory = yield user_1.default.findById(userId)
+                .select("travelHistory")
+                .lean();
+            const historyEntry = ((_d = userWithHistory === null || userWithHistory === void 0 ? void 0 : userWithHistory.travelHistory) !== null && _d !== void 0 ? _d : []).find((h) => new Date(h.date).toDateString() === targetDate.toDateString());
+            distanceTraveled = (_e = historyEntry === null || historyEntry === void 0 ? void 0 : historyEntry.distanceKm) !== null && _e !== void 0 ? _e : 0;
+        }
         const tasks = yield task_1.default.countDocuments({
             user: userId,
             date: { $gte: targetDate, $lte: endOfDay }
@@ -550,7 +566,10 @@ const getEmployeeWeeklyHours = (req, res) => __awaiter(void 0, void 0, void 0, f
             }
             // Total break hours
             const breakMs = breaks.reduce((sum, b) => { var _a; return sum + ((_a = b.duration) !== null && _a !== void 0 ? _a : 0) * 60 * 1000; }, 0);
-            // Idle = gaps > 15 min in location logs during work time
+            // Idle = gaps > 15 min in location logs during work time.
+            // Note: LocationLog has a TTL index — logs older than LOCATION_TTL_DAYS will be
+            // purged by MongoDB. When that happens locationLogs will be empty and idleMs
+            // stays 0 (safe default: productive = workMs - breakMs, no data lost).
             let idleMs = 0;
             if (firstIn && locationLogs.length > 1) {
                 for (let j = 1; j < locationLogs.length; j++) {

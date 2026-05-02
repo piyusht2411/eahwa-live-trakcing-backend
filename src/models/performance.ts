@@ -30,7 +30,8 @@ const performanceSchema = new Schema<IPerformance>(
       punctuality: { type: Number },
       visitCount: { type: Number },
       productiveRatio: { type: Number },
-      distance: { type: Number },
+      distance: { type: Number },    // legacy: normalized ratio (0–1) used by scoring
+      distanceKm: { type: Number },  // actual kilometers traveled — persistent, written on punch-out
       taskCompletion: { type: Number },
       breakDiscipline: { type: Number },
       stockConsistency: { type: Number },

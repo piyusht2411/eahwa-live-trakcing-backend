@@ -170,7 +170,8 @@ export interface IPerformance extends Document {
     punctuality?: number;
     visitCount?: number;
     productiveRatio?: number;
-    distance?: number;
+    distance?: number;      // legacy: normalized ratio (0–1) used by scoring
+    distanceKm?: number;    // actual kilometers traveled — persistent, written on punch-out
     taskCompletion?: number;
     breakDiscipline?: number;
     stockConsistency?: number;
