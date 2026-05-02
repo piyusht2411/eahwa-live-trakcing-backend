@@ -287,12 +287,22 @@ const getVisits = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
         for (const key of Object.keys(groupMap)) {
             groupMap[key].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
         }
-        // For each task compute distance traveled using GPS logs from prev task time → this task time
+        // For each task compute distance traveled using GPS logs from prev task time → this task time.
+        // Fallback: when LocationLog is empty (TTL purged raw GPS pings), distribute the day's
+        // total distance from User.travelHistory proportionally across tasks by time segment.
         const taskDistanceMap = {};
+        // Pre-load travelHistory for all unique userId__date combinations so we only hit
+        // the DB once per user (not once per task).
+        const travelHistoryCache = {}; // key = "userId__YYYY-MM-DD"
         yield Promise.all(Object.entries(groupMap).map((_a) => __awaiter(void 0, [_a], void 0, function* ([key, group]) {
+            var _b, _c;
             const [userId, dateStr] = key.split("__");
             const dayStart = new Date(dateStr);
             dayStart.setHours(0, 0, 0, 0);
+            const dayEnd = new Date(dateStr);
+            dayEnd.setHours(23, 59, 59, 999);
+            // ── Tier 1: try LocationLog (works for recent dates within TTL window) ──
+            let gpsAvailable = false;
             for (let i = 0; i < group.length; i++) {
                 const task = group[i];
                 const segStart = i === 0 ? dayStart : new Date(group[i - 1].date);
@@ -303,9 +313,36 @@ const getVisits = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
                 })
                     .sort({ timestamp: 1 })
                     .lean();
-                const coords = logs.map((l) => ({ lat: l.location.lat, lng: l.location.lng, timestamp: l.timestamp }));
-                taskDistanceMap[task._id.toString()] = yield (0, healper_1.getRoadDistance)(coords);
+                if (logs.length >= 2) {
+                    gpsAvailable = true;
+                    const coords = logs.map((l) => ({ lat: l.location.lat, lng: l.location.lng, timestamp: l.timestamp }));
+                    taskDistanceMap[task._id.toString()] = yield (0, healper_1.getRoadDistance)(coords);
+                }
             }
+            if (gpsAvailable)
+                return; // All segments computed from real GPS — done.
+            // ── Tier 2: LocationLog is empty (TTL purged) — use travelHistory ──
+            // Load the daily total from User.travelHistory (cached per userId).
+            if (!travelHistoryCache[key]) {
+                const userDoc = yield user_1.default.findById(userId).select("travelHistory").lean();
+                const entry = ((_b = userDoc === null || userDoc === void 0 ? void 0 : userDoc.travelHistory) !== null && _b !== void 0 ? _b : []).find((h) => new Date(h.date).toDateString() === dayStart.toDateString());
+                travelHistoryCache[key] = (_c = entry === null || entry === void 0 ? void 0 : entry.distanceKm) !== null && _c !== void 0 ? _c : 0;
+            }
+            const dailyTotalKm = travelHistoryCache[key];
+            if (dailyTotalKm <= 0) {
+                // No history at all — leave distances as 0
+                group.forEach(task => { taskDistanceMap[task._id.toString()] = 0; });
+                return;
+            }
+            // Distribute the daily total proportionally by each task's time window.
+            // Window = time from previous task (or day start) to this task's timestamp.
+            const dayMs = dayEnd.getTime() - dayStart.getTime();
+            group.forEach((task, i) => {
+                const segStart = i === 0 ? dayStart : new Date(group[i - 1].date);
+                const segMs = Math.max(0, new Date(task.date).getTime() - segStart.getTime());
+                const fraction = dayMs > 0 ? segMs / dayMs : 1 / group.length;
+                taskDistanceMap[task._id.toString()] = parseFloat((dailyTotalKm * fraction).toFixed(2));
+            });
         })));
         // Helper: convert a UTC Date to IST (UTC+5:30) and return { date: "YYYY-MM-DD", time: "HH:MM" }
         const toIST = (utcDate) => {

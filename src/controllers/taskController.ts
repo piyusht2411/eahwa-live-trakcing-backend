@@ -299,13 +299,25 @@ export const getVisits = async (req: any, res: Response) => {
       groupMap[key].sort((a, b) => new Date(a.date).getTime() - new Date(b.date).getTime());
     }
 
-    // For each task compute distance traveled using GPS logs from prev task time → this task time
+    // For each task compute distance traveled using GPS logs from prev task time → this task time.
+    // Fallback: when LocationLog is empty (TTL purged raw GPS pings), distribute the day's
+    // total distance from User.travelHistory proportionally across tasks by time segment.
     const taskDistanceMap: Record<string, number> = {};
+
+    // Pre-load travelHistory for all unique userId__date combinations so we only hit
+    // the DB once per user (not once per task).
+    const travelHistoryCache: Record<string, number> = {}; // key = "userId__YYYY-MM-DD"
+
     await Promise.all(
       Object.entries(groupMap).map(async ([key, group]) => {
         const [userId, dateStr] = key.split("__");
         const dayStart = new Date(dateStr);
         dayStart.setHours(0, 0, 0, 0);
+        const dayEnd = new Date(dateStr);
+        dayEnd.setHours(23, 59, 59, 999);
+
+        // ── Tier 1: try LocationLog (works for recent dates within TTL window) ──
+        let gpsAvailable = false;
 
         for (let i = 0; i < group.length; i++) {
           const task = group[i];
@@ -319,9 +331,41 @@ export const getVisits = async (req: any, res: Response) => {
             .sort({ timestamp: 1 })
             .lean();
 
-          const coords = logs.map((l: any) => ({ lat: l.location.lat, lng: l.location.lng, timestamp: l.timestamp }));
-          taskDistanceMap[task._id.toString()] = await getRoadDistance(coords);
+          if (logs.length >= 2) {
+            gpsAvailable = true;
+            const coords = logs.map((l: any) => ({ lat: l.location.lat, lng: l.location.lng, timestamp: l.timestamp }));
+            taskDistanceMap[task._id.toString()] = await getRoadDistance(coords);
+          }
         }
+
+        if (gpsAvailable) return; // All segments computed from real GPS — done.
+
+        // ── Tier 2: LocationLog is empty (TTL purged) — use travelHistory ──
+        // Load the daily total from User.travelHistory (cached per userId).
+        if (!travelHistoryCache[key]) {
+          const userDoc = await User.findById(userId).select("travelHistory").lean() as any;
+          const entry = (userDoc?.travelHistory ?? []).find(
+            (h: any) => new Date(h.date).toDateString() === dayStart.toDateString()
+          );
+          travelHistoryCache[key] = entry?.distanceKm ?? 0;
+        }
+        const dailyTotalKm = travelHistoryCache[key];
+
+        if (dailyTotalKm <= 0) {
+          // No history at all — leave distances as 0
+          group.forEach(task => { taskDistanceMap[task._id.toString()] = 0; });
+          return;
+        }
+
+        // Distribute the daily total proportionally by each task's time window.
+        // Window = time from previous task (or day start) to this task's timestamp.
+        const dayMs = dayEnd.getTime() - dayStart.getTime();
+        group.forEach((task, i) => {
+          const segStart = i === 0 ? dayStart : new Date(group[i - 1].date);
+          const segMs = Math.max(0, new Date(task.date).getTime() - segStart.getTime());
+          const fraction = dayMs > 0 ? segMs / dayMs : 1 / group.length;
+          taskDistanceMap[task._id.toString()] = parseFloat((dailyTotalKm * fraction).toFixed(2));
+        });
       })
     );
 
