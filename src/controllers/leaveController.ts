@@ -266,16 +266,56 @@ export const approveLeave = async (req: Request, res: Response) => {
   }
 };
 
-// ─── GET /api/leaves — Admin / Super Manager / HR: all leaves ────────────────
+// ─── GET /api/leaves — Scoped by role + optional month/year filter ───────────
+//   manager      → only leaves of employees they manage
+//   super_manager / hr / admin → all leaves
 
 export const getAllLeaves = async (req: Request, res: Response) => {
+  if (!req.user) return res.status(401).json({ message: "Unauthorized" });
+
   try {
-    const { page = "1", limit = "20" } = req.query;
+    const { page = "1", limit = "20", month, year } = req.query;
     const pageNum  = Math.max(parseInt(page as string) || 1, 1);
     const limitNum = Math.min(parseInt(limit as string) || 20, 100);
     const skip     = (pageNum - 1) * limitNum;
 
     const query = await buildLeaveQuery(req.query);
+
+    // ── Month / Year filter ──────────────────────────────────────────────────
+    // Accepts ?month=5&year=2026 (1-indexed month).
+    // Overrides any from/to already set by buildLeaveQuery.
+    if (month || year) {
+      const now     = new Date();
+      const m       = month ? parseInt(month as string) - 1 : now.getMonth(); // 0-indexed
+      const y       = year  ? parseInt(year  as string)     : now.getFullYear();
+      const start   = new Date(y, m, 1);
+      const end     = new Date(y, m + 1, 0, 23, 59, 59, 999);
+      query.date    = { $gte: start, $lte: end };
+    }
+
+    // ── Role-based scoping ───────────────────────────────────────────────────
+    const role = req.user.role;
+
+    if (role === "manager") {
+      // Manager sees only leaves of employees they manage
+      const managedUsers = await User.find({ managedBy: req.user._id }).select("_id").lean();
+      const managedIds   = managedUsers.map((u: any) => u._id);
+
+      if (managedIds.length === 0) {
+        return res.status(200).json({
+          success: true,
+          data: [],
+          summary: buildSummary([]),
+          pagination: { total: 0, page: pageNum, pages: 0, limit: limitNum },
+        });
+      }
+
+      // Narrow to managed employees; honour an existing employeeId filter if present
+      query.user = query.user
+        ? { $in: managedIds.filter((id: any) => id.toString() === query.user?.toString()) }
+        : { $in: managedIds };
+    }
+    // super_manager / hr / admin — no additional user scoping needed
 
     const [leaves, total, allForSummary] = await Promise.all([
       Leave.find(query)
@@ -305,6 +345,73 @@ export const getAllLeaves = async (req: Request, res: Response) => {
     });
   } catch (error) {
     console.error("Get all leaves error:", error);
+    res.status(500).json({ success: false, message: "Server error" });
+  }
+};
+
+// ─── GET /api/leaves/export — Full export for a given month/year (no pagination) ─
+//   manager      → only their team's leaves
+//   super_manager / hr / admin → all leaves
+
+export const exportLeaves = async (req: Request, res: Response) => {
+  if (!req.user) return res.status(401).json({ message: "Unauthorized" });
+
+  try {
+    const { month, year } = req.query;
+
+    // ── Month / Year filter (required for export) ────────────────────────────
+    const now = new Date();
+    const m   = month ? parseInt(month as string) - 1 : now.getMonth(); // 0-indexed
+    const y   = year  ? parseInt(year  as string)     : now.getFullYear();
+
+    if (isNaN(m) || m < 0 || m > 11 || isNaN(y)) {
+      return res.status(400).json({ success: false, message: "Invalid month or year" });
+    }
+
+    const start = new Date(y, m, 1);
+    const end   = new Date(y, m + 1, 0, 23, 59, 59, 999);
+
+    const query: any = { date: { $gte: start, $lte: end } };
+
+    // Honour optional status / type filters
+    if (req.query.status) query.status = req.query.status;
+    if (req.query.type)   query.type   = req.query.type;
+
+    // ── Role-based scoping ───────────────────────────────────────────────────
+    const role = req.user.role;
+
+    if (role === "manager") {
+      const managedUsers = await User.find({ managedBy: req.user._id }).select("_id").lean();
+      const managedIds   = managedUsers.map((u: any) => u._id);
+
+      if (managedIds.length === 0) {
+        return res.status(200).json({ success: true, data: [], summary: buildSummary([]) });
+      }
+
+      query.user = { $in: managedIds };
+    }
+    // super_manager / hr / admin — no user restriction
+
+    const leaves = await Leave.find(query)
+      .populate("user", "name employeeId department role employeeType")
+      .populate("approvedBy", "name")
+      .sort({ date: 1, createdAt: -1 })
+      .lean();
+
+    const validLeaves = leaves.filter((l: any) => l.user != null);
+
+    res.status(200).json({
+      success: true,
+      data: validLeaves,
+      summary: buildSummary(validLeaves),
+      meta: {
+        month: m + 1,
+        year:  y,
+        total: validLeaves.length,
+      },
+    });
+  } catch (error) {
+    console.error("Export leaves error:", error);
     res.status(500).json({ success: false, message: "Server error" });
   }
 };

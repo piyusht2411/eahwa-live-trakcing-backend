@@ -17,6 +17,8 @@ router.get("/team", auth_1.protect, (0, auth_1.authorize)("manager"), leaveContr
 router.get("/employees", auth_1.protect, (0, auth_1.authorize)("admin", "super_manager", "hr", "manager"), leaveController_1.getAllEmployeesForFilter);
 // ── Admin / Super Manager / HR: all leaves ────────────────────────────────────
 router.get("/", auth_1.protect, (0, auth_1.authorize)("admin", "super_manager", "hr", "manager"), leaveController_1.getAllLeaves);
+// ── Export: full month data, no pagination ─────────────────────────────────
+router.get("/export", auth_1.protect, (0, auth_1.authorize)("admin", "super_manager", "hr", "manager"), leaveController_1.exportLeaves);
 // ── Leave approval ────────────────────────────────────────────────────────────
 router.patch("/approve", auth_1.protect, (0, auth_1.authorize)("hr", "manager", "admin", "super_manager"), leaveController_1.approveLeave);
 router.put("/:id/status", auth_1.protect, (0, auth_1.authorize)("admin", "super_manager", "hr", "manager"), leaveController_1.updateLeaveStatus);

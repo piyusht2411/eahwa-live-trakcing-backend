@@ -5,6 +5,7 @@ import {
   approveLeave,
   updateLeaveStatus,
   getAllLeaves,
+  exportLeaves,
   getTeamLeaves,
   getLeaveHistory,
   getLeaveById,
@@ -31,6 +32,9 @@ router.get("/employees", protect, authorize("admin", "super_manager", "hr", "man
 
 // ── Admin / Super Manager / HR: all leaves ────────────────────────────────────
 router.get("/", protect, authorize("admin", "super_manager", "hr", "manager"), getAllLeaves);
+
+// ── Export: full month data, no pagination ─────────────────────────────────
+router.get("/export", protect, authorize("admin", "super_manager", "hr", "manager"), exportLeaves);
 
 // ── Leave approval ────────────────────────────────────────────────────────────
 router.patch("/approve", protect, authorize("hr", "manager", "admin", "super_manager"), approveLeave);

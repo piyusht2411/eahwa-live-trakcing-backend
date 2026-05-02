@@ -12,7 +12,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.deleteLeave = exports.getAllEmployeesForFilter = exports.getTeamMembers = exports.getLeaveById = exports.getLeaveHistory = exports.getTeamLeaves = exports.getAllLeaves = exports.approveLeave = exports.updateLeaveStatus = exports.requestLeave = void 0;
+exports.deleteLeave = exports.getAllEmployeesForFilter = exports.getTeamMembers = exports.getLeaveById = exports.getLeaveHistory = exports.getTeamLeaves = exports.exportLeaves = exports.getAllLeaves = exports.approveLeave = exports.updateLeaveStatus = exports.requestLeave = void 0;
 const leave_1 = __importDefault(require("../models/leave"));
 const user_1 = __importDefault(require("../models/user"));
 const notificationService_1 = require("../services/notificationService");
@@ -232,14 +232,49 @@ const approveLeave = (req, res) => __awaiter(void 0, void 0, void 0, function* (
     }
 });
 exports.approveLeave = approveLeave;
-// ─── GET /api/leaves — Admin / Super Manager / HR: all leaves ────────────────
+// ─── GET /api/leaves — Scoped by role + optional month/year filter ───────────
+//   manager      → only leaves of employees they manage
+//   super_manager / hr / admin → all leaves
 const getAllLeaves = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    if (!req.user)
+        return res.status(401).json({ message: "Unauthorized" });
     try {
-        const { page = "1", limit = "20" } = req.query;
+        const { page = "1", limit = "20", month, year } = req.query;
         const pageNum = Math.max(parseInt(page) || 1, 1);
         const limitNum = Math.min(parseInt(limit) || 20, 100);
         const skip = (pageNum - 1) * limitNum;
         const query = yield buildLeaveQuery(req.query);
+        // ── Month / Year filter ──────────────────────────────────────────────────
+        // Accepts ?month=5&year=2026 (1-indexed month).
+        // Overrides any from/to already set by buildLeaveQuery.
+        if (month || year) {
+            const now = new Date();
+            const m = month ? parseInt(month) - 1 : now.getMonth(); // 0-indexed
+            const y = year ? parseInt(year) : now.getFullYear();
+            const start = new Date(y, m, 1);
+            const end = new Date(y, m + 1, 0, 23, 59, 59, 999);
+            query.date = { $gte: start, $lte: end };
+        }
+        // ── Role-based scoping ───────────────────────────────────────────────────
+        const role = req.user.role;
+        if (role === "manager") {
+            // Manager sees only leaves of employees they manage
+            const managedUsers = yield user_1.default.find({ managedBy: req.user._id }).select("_id").lean();
+            const managedIds = managedUsers.map((u) => u._id);
+            if (managedIds.length === 0) {
+                return res.status(200).json({
+                    success: true,
+                    data: [],
+                    summary: buildSummary([]),
+                    pagination: { total: 0, page: pageNum, pages: 0, limit: limitNum },
+                });
+            }
+            // Narrow to managed employees; honour an existing employeeId filter if present
+            query.user = query.user
+                ? { $in: managedIds.filter((id) => { var _a; return id.toString() === ((_a = query.user) === null || _a === void 0 ? void 0 : _a.toString()); }) }
+                : { $in: managedIds };
+        }
+        // super_manager / hr / admin — no additional user scoping needed
         const [leaves, total, allForSummary] = yield Promise.all([
             leave_1.default.find(query)
                 .populate("user", "name employeeId department role employeeType")
@@ -271,6 +306,63 @@ const getAllLeaves = (req, res) => __awaiter(void 0, void 0, void 0, function* (
     }
 });
 exports.getAllLeaves = getAllLeaves;
+// ─── GET /api/leaves/export — Full export for a given month/year (no pagination) ─
+//   manager      → only their team's leaves
+//   super_manager / hr / admin → all leaves
+const exportLeaves = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    if (!req.user)
+        return res.status(401).json({ message: "Unauthorized" });
+    try {
+        const { month, year } = req.query;
+        // ── Month / Year filter (required for export) ────────────────────────────
+        const now = new Date();
+        const m = month ? parseInt(month) - 1 : now.getMonth(); // 0-indexed
+        const y = year ? parseInt(year) : now.getFullYear();
+        if (isNaN(m) || m < 0 || m > 11 || isNaN(y)) {
+            return res.status(400).json({ success: false, message: "Invalid month or year" });
+        }
+        const start = new Date(y, m, 1);
+        const end = new Date(y, m + 1, 0, 23, 59, 59, 999);
+        const query = { date: { $gte: start, $lte: end } };
+        // Honour optional status / type filters
+        if (req.query.status)
+            query.status = req.query.status;
+        if (req.query.type)
+            query.type = req.query.type;
+        // ── Role-based scoping ───────────────────────────────────────────────────
+        const role = req.user.role;
+        if (role === "manager") {
+            const managedUsers = yield user_1.default.find({ managedBy: req.user._id }).select("_id").lean();
+            const managedIds = managedUsers.map((u) => u._id);
+            if (managedIds.length === 0) {
+                return res.status(200).json({ success: true, data: [], summary: buildSummary([]) });
+            }
+            query.user = { $in: managedIds };
+        }
+        // super_manager / hr / admin — no user restriction
+        const leaves = yield leave_1.default.find(query)
+            .populate("user", "name employeeId department role employeeType")
+            .populate("approvedBy", "name")
+            .sort({ date: 1, createdAt: -1 })
+            .lean();
+        const validLeaves = leaves.filter((l) => l.user != null);
+        res.status(200).json({
+            success: true,
+            data: validLeaves,
+            summary: buildSummary(validLeaves),
+            meta: {
+                month: m + 1,
+                year: y,
+                total: validLeaves.length,
+            },
+        });
+    }
+    catch (error) {
+        console.error("Export leaves error:", error);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+});
+exports.exportLeaves = exportLeaves;
 // ─── GET /api/leaves/team — Manager: leaves for employees they manage ─────────
 const getTeamLeaves = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     if (!req.user)
