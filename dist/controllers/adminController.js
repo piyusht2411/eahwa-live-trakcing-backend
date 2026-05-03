@@ -22,8 +22,23 @@ const task_1 = __importDefault(require("../models/task"));
 const break_1 = __importDefault(require("../models/break"));
 const healper_1 = require("../utils/healper");
 const getAdminDashboardStats = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    if (!req.user)
+        return res.status(401).json({ message: "Unauthorized" });
     try {
         const period = req.query.period || "today";
+        const role = req.user.role;
+        // ── Role-based scoping ───────────────────────────────────────────────
+        // manager  → only their managed employees
+        // super_manager / hr / admin → all employees (scopedIds = null)
+        let scopedIds = null;
+        if (role === "manager") {
+            const managedUsers = yield user_1.default.find({ managedBy: req.user._id, isActive: true })
+                .select("_id")
+                .lean();
+            scopedIds = managedUsers.map((u) => u._id);
+        }
+        // Helper: add user filter to a query object only when scoped
+        const withScope = (q = {}) => scopedIds ? Object.assign(Object.assign({}, q), { user: { $in: scopedIds } }) : q;
         // Derive period date range
         const now = new Date();
         const periodEnd = new Date(now);
@@ -43,10 +58,13 @@ const getAdminDashboardStats = (req, res) => __awaiter(void 0, void 0, void 0, f
         today.setHours(0, 0, 0, 0);
         const endOfDay = new Date();
         endOfDay.setHours(23, 59, 59, 999);
-        // 1. Total Employees
-        const totalEmployees = yield user_1.default.countDocuments({ role: "employee", isActive: true });
-        // 2. Active Now (always today-based)
-        const punchesToday = yield punch_1.default.find({ date: { $gte: today, $lte: endOfDay } }).sort({ time: 1 });
+        // 1. Total Employees (scoped)
+        const employeeBaseQuery = { role: "employee", isActive: true };
+        if (scopedIds)
+            employeeBaseQuery._id = { $in: scopedIds };
+        const totalEmployees = yield user_1.default.countDocuments(employeeBaseQuery);
+        // 2. Active Now (always today-based, scoped)
+        const punchesToday = yield punch_1.default.find(withScope({ date: { $gte: today, $lte: endOfDay } })).sort({ time: 1 });
         const userPunchStatus = new Map();
         punchesToday.forEach(punch => {
             userPunchStatus.set(punch.user.toString(), punch.type);
@@ -56,11 +74,10 @@ const getAdminDashboardStats = (req, res) => __awaiter(void 0, void 0, void 0, f
             if (status === "in")
                 activeNowCount++;
         });
-        // 3. Punctuality (period-based: first punch-in per user per day)
+        // 3. Punctuality (period-based, scoped)
         const punchesInPeriod = period === "today"
             ? punchesToday
-            : yield punch_1.default.find({ date: { $gte: periodStart, $lte: periodEnd } }).sort({ time: 1 });
-        // key = "userId-YYYY-MM-DD" to track first punch-in each day per user
+            : yield punch_1.default.find(withScope({ date: { $gte: periodStart, $lte: periodEnd } })).sort({ time: 1 });
         const firstPunches = new Map();
         punchesInPeriod.forEach(punch => {
             if (punch.type === "in") {
@@ -83,13 +100,16 @@ const getAdminDashboardStats = (req, res) => __awaiter(void 0, void 0, void 0, f
         });
         const punctuality = [
             { name: "On Time", value: onTimeCount },
-            { name: "Late", value: lateCount }
+            { name: "Late", value: lateCount },
         ];
-        // 4. Recent Anomalies (period-based)
-        const recentAnomalies = yield alert_1.default.find({
+        // 4. Recent Anomalies (period-based, scoped)
+        const anomalyQuery = {
             resolved: false,
-            timestamp: { $gte: periodStart, $lte: periodEnd }
-        })
+            timestamp: { $gte: periodStart, $lte: periodEnd },
+        };
+        if (scopedIds)
+            anomalyQuery.user = { $in: scopedIds };
+        const recentAnomalies = yield alert_1.default.find(anomalyQuery)
             .populate("user", "name employeeId")
             .sort({ timestamp: -1 })
             .limit(10)
@@ -103,16 +123,22 @@ const getAdminDashboardStats = (req, res) => __awaiter(void 0, void 0, void 0, f
                 timestamp: a.timestamp,
                 severity: ["no_movement", "gps_disabled", "device_off"].includes(a.type) ? "High" : "Medium",
                 status: a.resolved ? "Resolved" : "Active",
-                description: a.description
+                description: a.description,
             });
         });
-        // 5. Top Performers (aggregate daily Performance scores within the period)
+        // 5. Top Performers (scoped by managed users when manager)
+        const perfMatch = {
+            period: "daily",
+            periodStart: { $gte: periodStart, $lte: periodEnd },
+        };
+        if (scopedIds)
+            perfMatch.user = { $in: scopedIds };
         const topPerfsAgg = yield performance_1.default.aggregate([
-            { $match: { period: "daily", periodStart: { $gte: periodStart, $lte: periodEnd } } },
+            { $match: perfMatch },
             { $group: { _id: "$user", totalScore: { $sum: "$score" }, days: { $sum: 1 } } },
             { $addFields: { avgScore: { $divide: ["$totalScore", "$days"] } } },
             { $sort: { avgScore: -1 } },
-            { $limit: 5 }
+            { $limit: 5 },
         ]);
         const perfUserIds = topPerfsAgg.map(p => p._id);
         const perfUsers = yield user_1.default.find({ _id: { $in: perfUserIds } }).select("name department").lean();
@@ -122,7 +148,7 @@ const getAdminDashboardStats = (req, res) => __awaiter(void 0, void 0, void 0, f
             return {
                 name: user.name || "Unknown",
                 department: user.department || "Unknown",
-                score: Math.round(p.avgScore * 10) / 10
+                score: Math.round(p.avgScore * 10) / 10,
             };
         });
         res.status(200).json({
@@ -134,7 +160,7 @@ const getAdminDashboardStats = (req, res) => __awaiter(void 0, void 0, void 0, f
                 punctuality,
                 recentAnomalies: formattedAnomalies,
                 topPerformers,
-            }
+            },
         });
     }
     catch (error) {

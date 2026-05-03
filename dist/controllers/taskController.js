@@ -344,15 +344,19 @@ const getVisits = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
                 taskDistanceMap[task._id.toString()] = parseFloat((dailyTotalKm * fraction).toFixed(2));
             });
         })));
-        // Helper: convert a UTC Date to IST (UTC+5:30) and return { date: "YYYY-MM-DD", time: "HH:MM" }
+        // Helper: convert a UTC Date to IST (UTC+5:30) and return { date: "YYYY-MM-DD", time: "h:MM AM/PM" }
         const toIST = (utcDate) => {
             const IST_OFFSET_MS = 5.5 * 60 * 60 * 1000; // +05:30 in ms
             const istDate = new Date(utcDate.getTime() + IST_OFFSET_MS);
             const iso = istDate.toISOString(); // now represents IST wall-clock in UTC form
-            return {
-                date: iso.split("T")[0], // "YYYY-MM-DD" in IST
-                time: iso.split("T")[1].slice(0, 5), // "HH:MM"      in IST
-            };
+            const dateStr = iso.split("T")[0]; // "YYYY-MM-DD" in IST
+            // Build 12-hour AM/PM time
+            let hours = istDate.getUTCHours();
+            const mins = istDate.getUTCMinutes().toString().padStart(2, "0");
+            const ampm = hours >= 12 ? "PM" : "AM";
+            hours = hours % 12 || 12; // 0 → 12
+            const timeStr = `${hours}:${mins} ${ampm}`;
+            return { date: dateStr, time: timeStr };
         };
         let data = tasks.map((task) => {
             var _a, _b, _c;
@@ -388,6 +392,14 @@ const getVisits = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
         if (managerName) {
             data = data.filter(v => v.managerName.toLowerCase().includes(managerName.toLowerCase()));
         }
+        // Sort: latest visit first (compare visitDate + visitTime as string is sufficient
+        // since date is YYYY-MM-DD and time carries AM/PM — we compare the raw task date instead)
+        data.sort((a, b) => {
+            var _a, _b, _c, _d;
+            const aMs = new Date((_b = (_a = tasks.find((t) => t._id.toString() === a._id.toString())) === null || _a === void 0 ? void 0 : _a.date) !== null && _b !== void 0 ? _b : 0).getTime();
+            const bMs = new Date((_d = (_c = tasks.find((t) => t._id.toString() === b._id.toString())) === null || _c === void 0 ? void 0 : _c.date) !== null && _d !== void 0 ? _d : 0).getTime();
+            return bMs - aMs; // descending — latest first
+        });
         res.json({ data });
     }
     catch (error) {

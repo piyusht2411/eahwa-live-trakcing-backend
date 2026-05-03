@@ -5,6 +5,6 @@ import { protect, authorize } from "../middleware/auth";
 const router = Router();
 
 // GET /api/admin/heatmap
-router.get("/", protect, authorize("admin", "hr", "manager"), getHeatmapData);
+router.get("/", protect, authorize("admin", "super_manager", "hr", "manager"), getHeatmapData);
 
 export default router;

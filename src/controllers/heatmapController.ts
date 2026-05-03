@@ -1,24 +1,40 @@
 import { Response } from "express";
 import { AuthRequest } from "../types/authRequest";
-import LocationLog from "../models/locationlogs";
+import Task from "../models/task";
+import User from "../models/user";
 import { haversineDistance } from "../utils/healper";
 
-const CLUSTER_RADIUS_METERS = 150; // GPS points within 150m = same location
-const MIN_PINGS_TO_SHOW = 3;       // ignore locations with very few pings (just passing by)
+// Two showroom visits are considered the "same location" if within 200 m
+const CLUSTER_RADIUS_METERS = 200;
+
+// ── Types ─────────────────────────────────────────────────────────────────────
+
+interface VisitRecord {
+    employeeId: string;
+    employeeName: string;
+    date: string;          // "YYYY-MM-DD"
+    showroomName: string;
+    address: string;
+}
 
 interface Cluster {
     lat: number;
     lng: number;
-    address?: string;
-    totalPings: number;
-    pointCount: number;
-    userMap: Map<string, { name: string; pings: number }>;
+    pointCount: number;    // for running-average center
+    address: string;
+    showroomName: string;
+    visits: VisitRecord[];
+    // per-employee aggregation built at mapping time
+    employeeMap: Map<string, { name: string; visitDates: string[]; visitCount: number }>;
 }
+
+// ── Controller ────────────────────────────────────────────────────────────────
 
 export const getHeatmapData = async (req: AuthRequest, res: Response) => {
     try {
         const { period = "today" } = req.query;
 
+        // ── Date range ───────────────────────────────────────────────────────
         const now = new Date();
         let startDate = new Date();
         startDate.setHours(0, 0, 0, 0);
@@ -27,107 +43,172 @@ export const getHeatmapData = async (req: AuthRequest, res: Response) => {
             startDate.setDate(now.getDate() - 7);
         } else if (period === "month") {
             startDate.setMonth(now.getMonth() - 1);
+            startDate.setHours(0, 0, 0, 0);
         }
 
         const endDate = new Date();
         endDate.setHours(23, 59, 59, 999);
 
-        // Fetch all location logs for the period with user name
-        const logs = await LocationLog.find({
-            timestamp: { $gte: startDate, $lte: endDate }
-        }).populate("user", "name").lean();
+        // ── Role-based user scoping ──────────────────────────────────────────
+        const authUser = req.user!;
+        const adminRoles = ["admin", "super_manager", "hr"];
+        const isAdminLevel = adminRoles.includes(authUser.role);
 
-        // Greedy clustering — group nearby GPS points into one location
+        let scopedUserIds: string[] | null = null;
+        if (!isAdminLevel) {
+            // manager: only their direct reports
+            const team = await User.find({ managedBy: authUser._id, isActive: true })
+                .select("_id")
+                .lean();
+            scopedUserIds = team.map((u: any) => u._id.toString());
+        }
+
+        // ── Fetch tasks (= actual visits) ────────────────────────────────────
+        const taskQuery: any = {
+            date: { $gte: startDate, $lte: endDate },
+            "address.lat": { $exists: true, $ne: null },
+            "address.lng": { $exists: true, $ne: null },
+        };
+        if (scopedUserIds) {
+            taskQuery.user = { $in: scopedUserIds };
+        }
+
+        const tasks = await Task.find(taskQuery)
+            .populate("user", "name employeeId")
+            .lean();
+
+        // ── Greedy spatial clustering ────────────────────────────────────────
         const clusters: Cluster[] = [];
 
-        for (const log of logs) {
-            if (!log.location?.lat || !log.location?.lng) continue;
-            const user: any = log.user;
+        for (const task of tasks) {
+            const user: any = task.user;
             if (!user) continue;
 
-            const { lat, lng } = log.location;
+            const lat = task.address?.lat;
+            const lng = task.address?.lng;
+            if (!lat || !lng) continue;
 
-            // Find nearest existing cluster within radius
-            let nearestCluster: Cluster | null = null;
+            const dateStr = new Date(task.date).toISOString().split("T")[0];
+
+            const visit: VisitRecord = {
+                employeeId:   user.employeeId || user._id.toString(),
+                employeeName: user.name        || "Unknown",
+                date:         dateStr,
+                showroomName: task.showroomName || "",
+                address:      task.address?.fullAddress || "",
+            };
+
+            // Find nearest cluster within radius
+            let nearest: Cluster | null = null;
             let minDist = Infinity;
 
-            for (const cluster of clusters) {
-                const distMeters = haversineDistance(cluster.lat, cluster.lng, lat, lng) * 1000;
-                if (distMeters <= CLUSTER_RADIUS_METERS && distMeters < minDist) {
-                    minDist = distMeters;
-                    nearestCluster = cluster;
+            for (const c of clusters) {
+                const distM = haversineDistance(c.lat, c.lng, lat, lng) * 1000;
+                if (distM <= CLUSTER_RADIUS_METERS && distM < minDist) {
+                    minDist = distM;
+                    nearest = c;
                 }
             }
 
-            if (nearestCluster) {
-                // Update running average of cluster center
-                nearestCluster.pointCount++;
-                nearestCluster.lat =
-                    (nearestCluster.lat * (nearestCluster.pointCount - 1) + lat) / nearestCluster.pointCount;
-                nearestCluster.lng =
-                    (nearestCluster.lng * (nearestCluster.pointCount - 1) + lng) / nearestCluster.pointCount;
-                nearestCluster.totalPings++;
+            if (nearest) {
+                // Update running-average center
+                nearest.pointCount++;
+                nearest.lat = (nearest.lat * (nearest.pointCount - 1) + lat) / nearest.pointCount;
+                nearest.lng = (nearest.lng * (nearest.pointCount - 1) + lng) / nearest.pointCount;
 
-                // Keep first available address
-                if (!nearestCluster.address && log.location.address) {
-                    nearestCluster.address = log.location.address;
-                }
+                // Prefer a non-empty address / showroomName
+                if (!nearest.address && visit.address) nearest.address = visit.address;
+                if (!nearest.showroomName && visit.showroomName) nearest.showroomName = visit.showroomName;
 
-                const userId = user._id.toString();
-                const existing = nearestCluster.userMap.get(userId);
-                if (existing) {
-                    existing.pings++;
+                nearest.visits.push(visit);
+
+                // Update per-employee map
+                const emp = nearest.employeeMap.get(visit.employeeId);
+                if (emp) {
+                    emp.visitCount++;
+                    if (!emp.visitDates.includes(visit.date)) emp.visitDates.push(visit.date);
                 } else {
-                    nearestCluster.userMap.set(userId, { name: user.name, pings: 1 });
+                    nearest.employeeMap.set(visit.employeeId, {
+                        name:       visit.employeeName,
+                        visitCount: 1,
+                        visitDates: [visit.date],
+                    });
                 }
             } else {
                 // Start a new cluster
+                const empMap = new Map<string, { name: string; visitDates: string[]; visitCount: number }>();
+                empMap.set(visit.employeeId, { name: visit.employeeName, visitCount: 1, visitDates: [dateStr] });
+
                 clusters.push({
                     lat,
                     lng,
-                    address: log.location.address,
-                    totalPings: 1,
-                    pointCount: 1,
-                    userMap: new Map([[user._id.toString(), { name: user.name, pings: 1 }]])
+                    pointCount:  1,
+                    address:     visit.address,
+                    showroomName: visit.showroomName,
+                    visits:      [visit],
+                    employeeMap: empMap,
                 });
             }
         }
 
-        // Filter noise, sort by hottest first, format response
+        // ── Format response ──────────────────────────────────────────────────
         const heatmapData = clusters
-            .filter(c => c.totalPings >= MIN_PINGS_TO_SHOW)
-            .sort((a, b) => b.totalPings - a.totalPings)
+            .filter(c => c.visits.length >= 1)
+            .sort((a, b) => b.visits.length - a.visits.length) // hottest first
             .map(cluster => {
-                const employees = Array.from(cluster.userMap.values())
-                    .sort((a, b) => b.pings - a.pings)
-                    .map(e => ({ name: e.name, visits: e.pings }));
+                const totalVisits = cluster.visits.length;
 
+                // Per-employee breakdown: sorted by most visits first
+                const employees = Array.from(cluster.employeeMap.entries())
+                    .map(([empId, info]) => ({
+                        employeeId:  empId,
+                        name:        info.name,
+                        visitCount:  info.visitCount,
+                        visitDates:  info.visitDates.sort(), // chronological
+                    }))
+                    .sort((a, b) => b.visitCount - a.visitCount);
+
+                // Flat visit log: chronological, useful for a detail panel
+                const visitLog = cluster.visits
+                    .slice()
+                    .sort((a, b) => a.date.localeCompare(b.date))
+                    .map(v => ({
+                        date:         v.date,
+                        employeeId:   v.employeeId,
+                        employeeName: v.employeeName,
+                        showroomName: v.showroomName,
+                        address:      v.address,
+                    }));
+
+                // Heat level
                 let coverage: "High" | "Medium" | "Low" = "Low";
                 let color = "bg-blue-100 text-blue-700 border-blue-200";
-
-                if (cluster.totalPings >= 50) {
+                if (totalVisits >= 20) {
                     coverage = "High";
-                    color = "bg-red-100 text-red-700 border-red-200";
-                } else if (cluster.totalPings >= 20) {
+                    color    = "bg-red-100 text-red-700 border-red-200";
+                } else if (totalVisits >= 8) {
                     coverage = "Medium";
-                    color = "bg-orange-100 text-orange-700 border-orange-200";
+                    color    = "bg-orange-100 text-orange-700 border-orange-200";
                 }
 
                 return {
-                    lat: parseFloat(cluster.lat.toFixed(6)),
-                    lng: parseFloat(cluster.lng.toFixed(6)),
-                    address: cluster.address ?? null,
-                    totalVisits: cluster.totalPings,
-                    uniqueVisitors: cluster.userMap.size,
+                    lat:            parseFloat(cluster.lat.toFixed(6)),
+                    lng:            parseFloat(cluster.lng.toFixed(6)),
+                    address:        cluster.address  || null,
+                    showroomName:   cluster.showroomName || null,
+                    totalVisits,
+                    uniqueVisitors: cluster.employeeMap.size,
                     coverage,
                     color,
-                    employees  // [{ name, visits }] sorted by most visits
+                    employees,   // who visits + how many times + which dates
+                    visitLog,    // flat chronological list of every visit
                 };
             });
 
         res.status(200).json({
             success: true,
-            data: heatmapData
+            period,
+            data: heatmapData,
         });
 
     } catch (error) {

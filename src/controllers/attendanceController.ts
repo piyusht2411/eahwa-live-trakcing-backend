@@ -136,6 +136,100 @@ export const getAttendance = async (req: Request, res: Response) => {
     }
 };
 
+// ─── GET /api/attendance/export — Full attendance data, no pagination ────────────
+// Accepts the same filters as getAttendance (date / year+month / year / userId)
+// but returns every matching record at once (for Excel / CSV exports).
+
+export const exportAttendance = async (req: Request, res: Response) => {
+    try {
+        const {
+            date,   // YYYY-MM-DD
+            year,
+            month,  // 1-12
+            userId, // optional: filter by specific user
+        } = req.query;
+
+        const authUser = req.user!;
+        const adminRoles = ["admin", "super_manager", "hr"];
+        const isAdminLevel = adminRoles.includes(authUser.role);
+
+        // ── Role-based scoping (same as getAttendance) ───────────────────────
+        let allowedUserIds: Types.ObjectId[] | null = null;
+
+        if (!isAdminLevel) {
+            const teamMembers = await User.find(
+                { managedBy: authUser._id, isActive: true },
+                { _id: 1 }
+            ).lean();
+            allowedUserIds = teamMembers.map((u: any) => u._id as Types.ObjectId);
+        }
+
+        // ── User filter ───────────────────────────────────────────────────
+        const userFilter: Record<string, any> = {};
+
+        if (userId && typeof userId === "string") {
+            if (!Types.ObjectId.isValid(userId)) {
+                return res.status(400).json({ success: false, message: "Invalid userId" });
+            }
+            const requestedId = new Types.ObjectId(userId);
+            if (allowedUserIds !== null && !allowedUserIds.some(id => id.equals(requestedId))) {
+                return res.status(403).json({ success: false, message: "Access denied: user not in your team" });
+            }
+            userFilter.user = requestedId;
+        } else if (allowedUserIds !== null) {
+            userFilter.user = { $in: allowedUserIds };
+        }
+
+        // ── Date range ───────────────────────────────────────────────────
+        let startDate: Date;
+        let endDate: Date;
+
+        if (date && typeof date === "string") {
+            const [y, m, d] = (date as string).split("-").map(Number);
+            startDate = new Date(y, m - 1, d, 0, 0, 0, 0);
+            endDate   = new Date(y, m - 1, d, 23, 59, 59, 999);
+        } else if (year && month) {
+            const y = parseInt(year as string);
+            const m = parseInt(month as string) - 1;
+            startDate = new Date(y, m, 1, 0, 0, 0, 0);
+            endDate   = new Date(y, m + 1, 0, 23, 59, 59, 999);
+        } else if (year) {
+            const y = parseInt(year as string);
+            startDate = new Date(y, 0, 1, 0, 0, 0, 0);
+            endDate   = new Date(y, 11, 31, 23, 59, 59, 999);
+        } else {
+            // Default → Today
+            const now = new Date();
+            startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+            endDate   = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
+        }
+
+        const query = { ...userFilter, date: { $gte: startDate, $lte: endDate } };
+
+        // ── Fetch all matching records (no pagination) ────────────────────────
+        const attendanceRecords = await Punch.find(query)
+            .populate("user", "name employeeId department")
+            .sort({ date: -1, time: -1 }) // Latest first
+            .lean();
+
+        res.status(200).json({
+            success: true,
+            data:    attendanceRecords,
+            total:   attendanceRecords.length,
+            filters: {
+                applied:  date ? "day" : year && month ? "month" : year ? "year" : "today",
+                userId:   userId  || undefined,
+                date:     date    || undefined,
+                year:     year    || undefined,
+                month:    month   || undefined,
+            },
+        });
+    } catch (error) {
+        console.error("Export attendance error:", error);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+};
+
 // Add this function below your existing getAttendance
 
 export const getUserAttendance = async (req: Request, res: Response) => {
