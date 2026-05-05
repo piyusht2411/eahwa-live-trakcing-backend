@@ -9,6 +9,7 @@ import { getRoadDistance } from "../utils/healper";
 import multer from "multer";
 import cloudinary from "../config/cloudinary";
 import bcrypt from "bcrypt";
+import { getManagedUserIdsForScope } from "../utils/accessScope";
 
 const LOCATION_ACTIVE_THRESHOLD_MS = 15 * 60 * 1000; // 15 minutes
 const upload = multer({ storage: multer.memoryStorage() });
@@ -254,6 +255,7 @@ export const getUserById = async (req: Request, res: Response) => {
 // GET /api/users/home-locations?roles=employee,manager  OR  ?roles[]=employee&roles[]=manager
 export const getUsersHomeLocations = async (req: Request, res: Response) => {
     try {
+        const allowedUserIds = await getManagedUserIdsForScope(req.user!);
         let roles: string[] = [];
 
         const rolesParam = req.query.roles;
@@ -271,6 +273,9 @@ export const getUsersHomeLocations = async (req: Request, res: Response) => {
         const query: any = { isActive: true };
         if (filteredRoles.length > 0) {
             query.role = { $in: filteredRoles };
+        }
+        if (allowedUserIds !== null) {
+            query._id = { $in: allowedUserIds };
         }
 
         const users = await User.find(query)

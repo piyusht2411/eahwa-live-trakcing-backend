@@ -15,6 +15,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.getTodayBreaks = exports.getAllBreaks = exports.endBreak = exports.startBreak = void 0;
 const break_1 = __importDefault(require("../models/break"));
 const punchCheck_1 = require("../utils/punchCheck");
+const accessScope_1 = require("../utils/accessScope");
 const startBreak = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     var _a;
     const userId = (_a = req.user) === null || _a === void 0 ? void 0 : _a._id;
@@ -106,6 +107,10 @@ const getAllBreaks = (req, res) => __awaiter(void 0, void 0, void 0, function* (
         //                Build MongoDB Query
         // ────────────────────────────────────────────────
         const query = {};
+        const allowedUserIds = yield (0, accessScope_1.getManagedUserIdsForScope)(req.user);
+        if (allowedUserIds !== null) {
+            query.user = { $in: allowedUserIds };
+        }
         // 1. Date range filter (preferred over month)
         if (startDate || endDate) {
             query.startTime = {};

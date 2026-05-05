@@ -22,6 +22,7 @@ const healper_1 = require("../utils/healper");
 const multer_1 = __importDefault(require("multer"));
 const cloudinary_1 = __importDefault(require("../config/cloudinary"));
 const bcrypt_1 = __importDefault(require("bcrypt"));
+const accessScope_1 = require("../utils/accessScope");
 const LOCATION_ACTIVE_THRESHOLD_MS = 15 * 60 * 1000; // 15 minutes
 const upload = (0, multer_1.default)({ storage: multer_1.default.memoryStorage() });
 const getTodayRange = () => {
@@ -218,6 +219,7 @@ exports.getUserById = getUserById;
 // GET /api/users/home-locations?roles=employee,manager  OR  ?roles[]=employee&roles[]=manager
 const getUsersHomeLocations = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
+        const allowedUserIds = yield (0, accessScope_1.getManagedUserIdsForScope)(req.user);
         let roles = [];
         const rolesParam = req.query.roles;
         if (Array.isArray(rolesParam)) {
@@ -233,6 +235,9 @@ const getUsersHomeLocations = (req, res) => __awaiter(void 0, void 0, void 0, fu
         const query = { isActive: true };
         if (filteredRoles.length > 0) {
             query.role = { $in: filteredRoles };
+        }
+        if (allowedUserIds !== null) {
+            query._id = { $in: allowedUserIds };
         }
         const users = yield user_1.default.find(query)
             .select("name email employeeId role department phone homeLocation")

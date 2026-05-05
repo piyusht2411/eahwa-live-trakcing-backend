@@ -4,6 +4,6 @@ import { protect, authorize } from "../middleware/auth";
 
 const router = Router();
 
-router.get("/", protect, getAnomalies);
+router.get("/", protect, authorize("admin", "super_manager", "hr", "manager"), getAnomalies);
 
 export default router;

@@ -8,6 +8,7 @@ import Performance from "../models/performance";
 import Task from "../models/task";
 import Break from "../models/break";
 import { haversineDistance, getRoadSegmentDistances } from "../utils/healper";
+import { getManagedUserIdsForScope } from "../utils/accessScope";
 
 export const getAdminDashboardStats = async (req: AuthRequest, res: Response) => {
     if (!req.user) return res.status(401).json({ message: "Unauthorized" });
@@ -175,12 +176,23 @@ export const getAdminDashboardStats = async (req: AuthRequest, res: Response) =>
 
 export const getLiveLocations = async (req: AuthRequest, res: Response) => {
     try {
+        if (!req.user) return res.status(401).json({ message: "Unauthorized" });
+
         const today = new Date();
         today.setHours(0, 0, 0, 0);
 
+        const allowedUserIds = await getManagedUserIdsForScope(req.user);
+        const match: any = { timestamp: { $gte: today } };
+        if (allowedUserIds !== null) {
+            if (allowedUserIds.length === 0) {
+                return res.status(200).json({ success: true, data: [] });
+            }
+            match.user = { $in: allowedUserIds };
+        }
+
         // Get the most recent location log for each user today
         const liveLocations = await LocationLog.aggregate([
-            { $match: { timestamp: { $gte: today } } },
+            { $match: match },
             { $sort: { timestamp: -1 } },
             {
                 $group: {

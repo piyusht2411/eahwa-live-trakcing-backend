@@ -1,6 +1,7 @@
 import { Response } from "express";
 import { AuthRequest as Request } from "../types/authRequest";
 import Performance from "../models/performance";
+import { getManagedUserIdsForScope } from "../utils/accessScope";
 
 export const getPerformances = async (req: Request, res: Response) => {
     try {
@@ -18,10 +19,17 @@ export const getPerformances = async (req: Request, res: Response) => {
             startDate = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
         }
 
-        const performances = await Performance.find({
+        const query: any = {
             period,
             periodStart: { $gte: startDate }
-        })
+        };
+
+        const allowedUserIds = await getManagedUserIdsForScope(req.user!);
+        if (allowedUserIds !== null) {
+            query.user = { $in: allowedUserIds };
+        }
+
+        const performances = await Performance.find(query)
         .populate("user", "name employeeId department profilePicture")
         .sort({ score: -1, createdAt: -1 })
         .lean();

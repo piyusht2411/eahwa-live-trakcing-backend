@@ -15,18 +15,32 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.getAnomalies = exports.getAlerts = void 0;
 const alert_1 = __importDefault(require("../models/alert"));
 const anomaly_1 = __importDefault(require("../models/anomaly"));
+const mongoose_1 = require("mongoose");
+const accessScope_1 = require("../utils/accessScope");
 const getAlerts = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
         const { type, status, userId, from, to, limit = "50", page = "1", } = req.query;
         const filter = {};
+        const allowedUserIds = yield (0, accessScope_1.getManagedUserIdsForScope)(req.user);
         if (type)
             filter.type = type;
         if (status === "resolved")
             filter.resolved = true;
         else if (status === "open")
             filter.resolved = false;
-        if (userId)
-            filter.user = userId;
+        if (userId && typeof userId === "string") {
+            if (!mongoose_1.Types.ObjectId.isValid(userId)) {
+                return res.status(400).json({ success: false, message: "Invalid userId" });
+            }
+            const requestedId = new mongoose_1.Types.ObjectId(userId);
+            if (!(0, accessScope_1.isUserInScope)(allowedUserIds, requestedId)) {
+                return res.status(403).json({ success: false, message: "Access denied: user not in your team" });
+            }
+            filter.user = requestedId;
+        }
+        else if (allowedUserIds !== null) {
+            filter.user = { $in: allowedUserIds };
+        }
         if (from || to) {
             filter.timestamp = {};
             if (from)
@@ -87,10 +101,22 @@ const getAnomalies = (req, res) => __awaiter(void 0, void 0, void 0, function* (
     try {
         const { type, userId, from, to, limit = "50", page = "1", } = req.query;
         const filter = {};
+        const allowedUserIds = yield (0, accessScope_1.getManagedUserIdsForScope)(req.user);
         if (type)
             filter.type = type;
-        if (userId)
-            filter.user = userId;
+        if (userId && typeof userId === "string") {
+            if (!mongoose_1.Types.ObjectId.isValid(userId)) {
+                return res.status(400).json({ success: false, message: "Invalid userId" });
+            }
+            const requestedId = new mongoose_1.Types.ObjectId(userId);
+            if (!(0, accessScope_1.isUserInScope)(allowedUserIds, requestedId)) {
+                return res.status(403).json({ success: false, message: "Access denied: user not in your team" });
+            }
+            filter.user = requestedId;
+        }
+        else if (allowedUserIds !== null) {
+            filter.user = { $in: allowedUserIds };
+        }
         if (from || to) {
             filter.timestamp = {};
             if (from)

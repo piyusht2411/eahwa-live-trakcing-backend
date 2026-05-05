@@ -14,6 +14,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.getPerformances = void 0;
 const performance_1 = __importDefault(require("../models/performance"));
+const accessScope_1 = require("../utils/accessScope");
 const getPerformances = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
         const { period = "daily" } = req.query; // daily, weekly, monthly
@@ -30,10 +31,15 @@ const getPerformances = (req, res) => __awaiter(void 0, void 0, void 0, function
         else if (period === "monthly") {
             startDate = new Date(startDate.getFullYear(), startDate.getMonth(), 1);
         }
-        const performances = yield performance_1.default.find({
+        const query = {
             period,
             periodStart: { $gte: startDate }
-        })
+        };
+        const allowedUserIds = yield (0, accessScope_1.getManagedUserIdsForScope)(req.user);
+        if (allowedUserIds !== null) {
+            query.user = { $in: allowedUserIds };
+        }
+        const performances = yield performance_1.default.find(query)
             .populate("user", "name employeeId department profilePicture")
             .sort({ score: -1, createdAt: -1 })
             .lean();

@@ -5,5 +5,5 @@ const alertController_1 = require("../controllers/alertController");
 const auth_1 = require("../middleware/auth");
 const router = (0, express_1.Router)();
 // /api/alerts
-router.get("/", auth_1.protect, alertController_1.getAlerts);
+router.get("/", auth_1.protect, (0, auth_1.authorize)("admin", "super_manager", "hr", "manager"), alertController_1.getAlerts);
 exports.default = router;

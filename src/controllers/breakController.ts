@@ -2,6 +2,7 @@ import { Response } from "express";
 import { AuthRequest } from "../types/authRequest";
 import Break from "../models/break";
 import { isUserPunchedIn } from "../utils/punchCheck";
+import { getManagedUserIdsForScope } from "../utils/accessScope";
 
 export const startBreak = async (req: AuthRequest, res: Response) => {
     const userId = req.user?._id;
@@ -109,6 +110,10 @@ export const getAllBreaks = async (req: AuthRequest, res: Response) => {
     //                Build MongoDB Query
     // ────────────────────────────────────────────────
     const query: any = {};
+    const allowedUserIds = await getManagedUserIdsForScope(req.user!);
+    if (allowedUserIds !== null) {
+      query.user = { $in: allowedUserIds };
+    }
 
     // 1. Date range filter (preferred over month)
     if (startDate || endDate) {

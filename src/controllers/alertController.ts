@@ -2,6 +2,8 @@ import { Response } from "express";
 import { AuthRequest } from "../types/authRequest";
 import Alert from "../models/alert";
 import Anomaly from "../models/anomaly";
+import { Types } from "mongoose";
+import { getManagedUserIdsForScope, isUserInScope } from "../utils/accessScope";
 
 export const getAlerts = async (req: AuthRequest, res: Response) => {
   try {
@@ -16,13 +18,25 @@ export const getAlerts = async (req: AuthRequest, res: Response) => {
     } = req.query;
 
     const filter: Record<string, any> = {};
+    const allowedUserIds = await getManagedUserIdsForScope(req.user!);
 
     if (type) filter.type = type;
 
     if (status === "resolved") filter.resolved = true;
     else if (status === "open") filter.resolved = false;
 
-    if (userId) filter.user = userId;
+    if (userId && typeof userId === "string") {
+      if (!Types.ObjectId.isValid(userId)) {
+        return res.status(400).json({ success: false, message: "Invalid userId" });
+      }
+      const requestedId = new Types.ObjectId(userId);
+      if (!isUserInScope(allowedUserIds, requestedId)) {
+        return res.status(403).json({ success: false, message: "Access denied: user not in your team" });
+      }
+      filter.user = requestedId;
+    } else if (allowedUserIds !== null) {
+      filter.user = { $in: allowedUserIds };
+    }
 
     if (from || to) {
       filter.timestamp = {};
@@ -94,9 +108,21 @@ export const getAnomalies = async (req: AuthRequest, res: Response) => {
     } = req.query;
 
     const filter: Record<string, any> = {};
+    const allowedUserIds = await getManagedUserIdsForScope(req.user!);
 
     if (type) filter.type = type;
-    if (userId) filter.user = userId;
+    if (userId && typeof userId === "string") {
+      if (!Types.ObjectId.isValid(userId)) {
+        return res.status(400).json({ success: false, message: "Invalid userId" });
+      }
+      const requestedId = new Types.ObjectId(userId);
+      if (!isUserInScope(allowedUserIds, requestedId)) {
+        return res.status(403).json({ success: false, message: "Access denied: user not in your team" });
+      }
+      filter.user = requestedId;
+    } else if (allowedUserIds !== null) {
+      filter.user = { $in: allowedUserIds };
+    }
 
     if (from || to) {
       filter.timestamp = {};

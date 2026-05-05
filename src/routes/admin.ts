@@ -6,7 +6,7 @@ const router = Router();
 
 // /api/admin/*
 router.get("/dashboard", protect, authorize("admin", "super_manager", "hr", "manager"), getAdminDashboardStats);
-router.get("/tracking/live", protect, authorize("admin", "hr", "manager"), getLiveLocations);
+router.get("/tracking/live", protect, authorize("admin", "super_manager", "hr", "manager"), getLiveLocations);
 router.get("/tracking/history/:userId", protect, authorize("admin", "hr", "manager"), getLocationHistory);
 router.get("/employee/:userId/stats", protect, authorize("admin", "hr", "manager"), getEmployeeStats);
 router.get("/employees/:id/performance", protect, authorize("admin", "hr", "manager"), getEmployeePerformance);

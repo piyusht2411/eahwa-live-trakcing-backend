@@ -21,6 +21,7 @@ const performance_1 = __importDefault(require("../models/performance"));
 const task_1 = __importDefault(require("../models/task"));
 const break_1 = __importDefault(require("../models/break"));
 const healper_1 = require("../utils/healper");
+const accessScope_1 = require("../utils/accessScope");
 const getAdminDashboardStats = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     if (!req.user)
         return res.status(401).json({ message: "Unauthorized" });
@@ -171,11 +172,21 @@ const getAdminDashboardStats = (req, res) => __awaiter(void 0, void 0, void 0, f
 exports.getAdminDashboardStats = getAdminDashboardStats;
 const getLiveLocations = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     try {
+        if (!req.user)
+            return res.status(401).json({ message: "Unauthorized" });
         const today = new Date();
         today.setHours(0, 0, 0, 0);
+        const allowedUserIds = yield (0, accessScope_1.getManagedUserIdsForScope)(req.user);
+        const match = { timestamp: { $gte: today } };
+        if (allowedUserIds !== null) {
+            if (allowedUserIds.length === 0) {
+                return res.status(200).json({ success: true, data: [] });
+            }
+            match.user = { $in: allowedUserIds };
+        }
         // Get the most recent location log for each user today
         const liveLocations = yield locationlogs_1.default.aggregate([
-            { $match: { timestamp: { $gte: today } } },
+            { $match: match },
             { $sort: { timestamp: -1 } },
             {
                 $group: {
