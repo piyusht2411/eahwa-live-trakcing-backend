@@ -12,7 +12,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.login = exports.updateFcmToken = exports.register = void 0;
+exports.login = exports.changePassword = exports.updateFcmToken = exports.register = void 0;
 const bcrypt_1 = __importDefault(require("bcrypt"));
 const jsonwebtoken_1 = __importDefault(require("jsonwebtoken"));
 const multer_1 = __importDefault(require("multer"));
@@ -113,6 +113,29 @@ const updateFcmToken = (req, res) => __awaiter(void 0, void 0, void 0, function*
     res.json({ success: true });
 });
 exports.updateFcmToken = updateFcmToken;
+const changePassword = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    const { email, newPassword } = req.body;
+    if (!email || !newPassword) {
+        return res.status(400).json({ message: "email and newPassword are required" });
+    }
+    if (typeof newPassword !== "string" || newPassword.length < 6) {
+        return res.status(400).json({ message: "newPassword must be at least 6 characters" });
+    }
+    try {
+        const user = yield user_1.default.findOne({ email }).select("+password");
+        if (!user) {
+            return res.status(404).json({ message: "User not found" });
+        }
+        user.password = newPassword;
+        yield user.save(); // pre-save hook in User model auto-hashes the password
+        return res.status(200).json({ success: true, message: "Password changed successfully" });
+    }
+    catch (error) {
+        console.error("changePassword error:", error);
+        return res.status(500).json({ message: "Server error" });
+    }
+});
+exports.changePassword = changePassword;
 const login = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     var _a, _b, _c;
     const { userName, password, fcmToken } = req.body;

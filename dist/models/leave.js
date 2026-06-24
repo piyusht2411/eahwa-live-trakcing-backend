@@ -23,6 +23,13 @@ const leaveSchema = new mongoose_1.Schema({
         type: Date,
         required: true,
     },
+    // End date for multi-day leaves (inclusive). For single-day leaves this is
+    // null and the leave spans only `date`. Only used by full-day leave types
+    // (casual / sick / annual) — never for "short" or "half-day".
+    endDate: {
+        type: Date,
+        default: null,
+    },
     reason: {
         type: String,
     },

@@ -137,6 +137,8 @@ export interface ILeave extends Document {
   /** Only for type === "short". 1 or 2 hours. */
   shortLeaveDuration?: 1 | 2;
   date: Date;
+  /** End date (inclusive) for multi-day leaves. Null/absent for single-day. */
+  endDate?: Date | null;
   reason?: string;
   status: "pending" | "approved" | "rejected";
   approvedBy?: Types.ObjectId;

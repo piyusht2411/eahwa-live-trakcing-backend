@@ -8,4 +8,5 @@ const router = (0, express_1.Router)();
 router.post("/register", authController_1.register); // Only admin/hr
 router.post("/login", authController_1.login);
 router.patch("/fcm-token", auth_1.protect, authController_1.updateFcmToken);
+router.post("/change-password", authController_1.changePassword); // No auth token required — email + newPassword in body
 exports.default = router;

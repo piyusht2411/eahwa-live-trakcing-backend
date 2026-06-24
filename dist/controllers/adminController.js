@@ -512,6 +512,8 @@ const autoPunchOut = (req, res) => __awaiter(void 0, void 0, void 0, function* (
                 location: { lat: lastLoc.lat, lng: lastLoc.lng, address: "Auto Punch-Out (location timeout)" },
                 selfie: "system",
                 verified: false,
+                isAutomatic: true,
+                reason: "Location timeout — auto punch-out",
             });
             autoPunchedOut++;
         }

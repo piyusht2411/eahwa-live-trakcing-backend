@@ -235,22 +235,16 @@ export const exportAttendance = async (req: Request, res: Response) => {
 export const getUserAttendance = async (req: Request, res: Response) => {
   try {
     const { userId } = req.params;                    // ← From URL
-    const { 
+    const {
       date,           // YYYY-MM-DD
-      year, 
+      year,
       month,          // 1-12
-      page = "1", 
-      limit = "20" 
     } = req.query;
 
     // Basic validation
     if (!userId || !Types.ObjectId.isValid(userId)) {
       return res.status(400).json({ success: false, message: "Invalid userId" });
     }
-
-    // ====================== Pagination ======================
-    const currentPage = Math.max(1, parseInt(page as string) || 1);
-    const pageSize = Math.min(100, Math.max(1, parseInt(limit as string) || 20));
 
     // ====================== Date Filtering Logic (same as getAttendance) ======================
     let startDate: Date;
@@ -260,18 +254,18 @@ export const getUserAttendance = async (req: Request, res: Response) => {
       const [y, m, d] = (date as string).split("-").map(Number);
       startDate = new Date(y, m - 1, d, 0, 0, 0, 0);
       endDate   = new Date(y, m - 1, d, 23, 59, 59, 999);
-    } 
+    }
     else if (year && month) {
       const y = parseInt(year as string);
       const m = parseInt(month as string) - 1;
       startDate = new Date(y, m, 1, 0, 0, 0, 0);
       endDate   = new Date(y, m + 1, 0, 23, 59, 59, 999);
-    } 
+    }
     else if (year) {
       const y = parseInt(year as string);
       startDate = new Date(y, 0, 1, 0, 0, 0, 0);
       endDate   = new Date(y, 11, 31, 23, 59, 59, 999);
-    } 
+    }
     else {
       // Default → Today
       const now = new Date();
@@ -279,35 +273,32 @@ export const getUserAttendance = async (req: Request, res: Response) => {
       endDate   = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
     }
 
-    // ====================== Count Total Records ======================
-    const totalRecords = await Punch.countDocuments({
-      user: userId,
-      date: { $gte: startDate, $lte: endDate },
-    });
-
     // ====================== Fetch Data ======================
+    // The date range is already bounded (a single day / month / year), so a single
+    // user's record set is small. We return EVERY record in the range — no skip/limit —
+    // otherwise a `limit` smaller than 2×(days in month) silently truncates older days
+    // (this is what made the profile list stop ~18 days back) and also corrupts the
+    // monthly Present/Late/Days summary counts.
     const attendanceRecords = await Punch.find({
       user: userId,
       date: { $gte: startDate, $lte: endDate },
     })
       .populate("user", "name employeeId department")   // optional but consistent
       .sort({ date: -1, time: -1 })                     // Latest → Oldest
-      .skip((currentPage - 1) * pageSize)
-      .limit(pageSize)
       .lean();
 
-    const totalPages = Math.ceil(totalRecords / pageSize);
+    const totalRecords = attendanceRecords.length;
 
     res.status(200).json({
       success: true,
       data: attendanceRecords,
       pagination: {
         totalRecords,
-        totalPages,
-        currentPage,
-        pageSize,
-        hasNextPage: currentPage < totalPages,
-        hasPrevPage: currentPage > 1,
+        totalPages: 1,
+        currentPage: 1,
+        pageSize: totalRecords,
+        hasNextPage: false,
+        hasPrevPage: false,
       },
       filters: {
         applied: date ? "day" : year && month ? "month" : year ? "year" : "today",

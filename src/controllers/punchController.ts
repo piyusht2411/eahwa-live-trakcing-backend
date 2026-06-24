@@ -59,95 +59,106 @@ export const punch = [
 
       await punch.save();
 
-      // Late punch-in alert — applies to all employee types.
-      if (type === "in" && punch.isLate) {
-        const userName = authReq.user?.name || String(userId);
-        const description = `${userName} punched in late at ${punch.time.toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" })} IST (after 10:15 AM)`;
-        await Alert.create({ user: userId, type: "late_arrival", description });
-        if (process.env.HR_WHATSAPP_TO) {
-          sendAnomalyAlert(String(userId), userName, "late_arrival", description).catch((err) =>
-            console.error("Late punch-in WhatsApp alert failed:", err.message)
-          );
-        }
-      }
-
-      // On punch-out: calculate today's distance and save to user's travelHistory
-      if (type === "out") {
-        try {
-          const today = new Date();
-          today.setHours(0, 0, 0, 0);
-          const endOfDay = new Date();
-          endOfDay.setHours(23, 59, 59, 999);
-
-          const locationLogs = await LocationLog.find({
-            user: userId,
-            timestamp: { $gte: today, $lte: endOfDay },
-          }).sort({ timestamp: 1 }).select("location timestamp").lean();
-
-          const coords = locationLogs.map((l: any) => ({
-            lat: l.location.lat,
-            lng: l.location.lng,
-            timestamp: l.timestamp,
-          }));
-
-          const distanceKm = await getRoadDistance(coords);
-
-          // ── Persist distance in User.travelHistory (primary long-lived store) ──
-          await User.findOneAndUpdate(
-            { _id: userId, "travelHistory.date": today },
-            { $set: { "travelHistory.$.distanceKm": distanceKm } }
-          ).then(async (updated) => {
-            if (!updated) {
-              await User.findByIdAndUpdate(userId, {
-                $push: { travelHistory: { date: today, distanceKm } },
-              });
-            }
-          });
-
-          // ── Also persist in Performance (daily) so reports never lose distance ──
-          // This is a secondary store independent of the LocationLog TTL.
-          const perfEndOfDay = new Date(today);
-          perfEndOfDay.setHours(23, 59, 59, 999);
-          await Performance.findOneAndUpdate(
-            { user: userId, period: "daily", periodStart: today },
-            {
-              $set: { "metrics.distanceKm": distanceKm },
-              // $setOnInsert only runs when MongoDB creates a NEW document (upsert).
-              // Required schema fields must be provided so validation doesn't fail.
-              $setOnInsert: { periodEnd: perfEndOfDay, score: 0 },
-            },
-            { upsert: true }
-          ).catch((err: any) =>
-            // Non-fatal: travelHistory is already saved; don't block the response.
-            console.error("[Punch Out] Failed to persist distance to Performance:", err)
-          );
-        } catch (err) {
-          console.error("[Punch Out] Failed to save travel distance:", err);
-        }
-      }
-
-      // Fetch manager name if available
-      let managerName = "";
-      if (authReq.user?.managedBy) {
-        const manager = await User.findById(authReq.user.managedBy).select("name");
-        managerName = manager?.name || "";
-      }
-
-      // Update Google Sheet
-      await updatePunchSheet({
-        employeeName: authReq.user?.name,
-        employeeId: authReq.user?.employeeId,
-        department: authReq.user?.department,
-        manager: managerName,
-        date: punch.date,
-        time: punch.time,
-        location: punch.location,
-        selfie: punch.selfie,
-        type,
-        isLate: punch.isLate,
-      });
-
+      // Respond as soon as the punch is persisted. Everything below (distance
+      // calc via OSRM, Google Sheet sync, alerts) is secondary and slow — running
+      // it before responding is what caused the 30s client timeout. We fire it
+      // off after the response so the user gets instant confirmation.
       res.status(201).json({ message: "Punch recorded", punch });
+
+      // ── Background side-effects: never block or fail the punch response ──
+      void (async () => {
+        try {
+          // Late punch-in alert — applies to all employee types.
+          if (type === "in" && punch.isLate) {
+            const userName = authReq.user?.name || String(userId);
+            const description = `${userName} punched in late at ${punch.time.toLocaleTimeString("en-IN", { timeZone: "Asia/Kolkata", hour: "2-digit", minute: "2-digit" })} IST (after 10:15 AM)`;
+            await Alert.create({ user: userId, type: "late_arrival", description });
+            if (process.env.HR_WHATSAPP_TO) {
+              sendAnomalyAlert(String(userId), userName, "late_arrival", description).catch((err) =>
+                console.error("Late punch-in WhatsApp alert failed:", err.message)
+              );
+            }
+          }
+
+          // On punch-out: calculate today's distance and save to user's travelHistory
+          if (type === "out") {
+            try {
+              const today = new Date();
+              today.setHours(0, 0, 0, 0);
+              const endOfDay = new Date();
+              endOfDay.setHours(23, 59, 59, 999);
+
+              const locationLogs = await LocationLog.find({
+                user: userId,
+                timestamp: { $gte: today, $lte: endOfDay },
+              }).sort({ timestamp: 1 }).select("location timestamp").lean();
+
+              const coords = locationLogs.map((l: any) => ({
+                lat: l.location.lat,
+                lng: l.location.lng,
+                timestamp: l.timestamp,
+              }));
+
+              const distanceKm = await getRoadDistance(coords);
+
+              // ── Persist distance in User.travelHistory (primary long-lived store) ──
+              await User.findOneAndUpdate(
+                { _id: userId, "travelHistory.date": today },
+                { $set: { "travelHistory.$.distanceKm": distanceKm } }
+              ).then(async (updated) => {
+                if (!updated) {
+                  await User.findByIdAndUpdate(userId, {
+                    $push: { travelHistory: { date: today, distanceKm } },
+                  });
+                }
+              });
+
+              // ── Also persist in Performance (daily) so reports never lose distance ──
+              // This is a secondary store independent of the LocationLog TTL.
+              const perfEndOfDay = new Date(today);
+              perfEndOfDay.setHours(23, 59, 59, 999);
+              await Performance.findOneAndUpdate(
+                { user: userId, period: "daily", periodStart: today },
+                {
+                  $set: { "metrics.distanceKm": distanceKm },
+                  // $setOnInsert only runs when MongoDB creates a NEW document (upsert).
+                  // Required schema fields must be provided so validation doesn't fail.
+                  $setOnInsert: { periodEnd: perfEndOfDay, score: 0 },
+                },
+                { upsert: true }
+              ).catch((err: any) =>
+                // Non-fatal: travelHistory is already saved.
+                console.error("[Punch Out] Failed to persist distance to Performance:", err)
+              );
+            } catch (err) {
+              console.error("[Punch Out] Failed to save travel distance:", err);
+            }
+          }
+
+          // Fetch manager name if available
+          let managerName = "";
+          if (authReq.user?.managedBy) {
+            const manager = await User.findById(authReq.user.managedBy).select("name");
+            managerName = manager?.name || "";
+          }
+
+          // Update Google Sheet
+          await updatePunchSheet({
+            employeeName: authReq.user?.name,
+            employeeId: authReq.user?.employeeId,
+            department: authReq.user?.department,
+            manager: managerName,
+            date: punch.date,
+            time: punch.time,
+            location: punch.location,
+            selfie: punch.selfie,
+            type,
+            isLate: punch.isLate,
+          });
+        } catch (bgErr) {
+          console.error("[Punch] Background side-effect failed:", bgErr);
+        }
+      })();
     } catch (error) {
       console.log(error)
       res.status(500).json({ message: "Error" });

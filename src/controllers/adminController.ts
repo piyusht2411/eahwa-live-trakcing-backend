@@ -560,6 +560,8 @@ export const autoPunchOut = async (req: AuthRequest, res: Response) => {
                 location: { lat: lastLoc.lat, lng: lastLoc.lng, address: "Auto Punch-Out (location timeout)" },
                 selfie: "system",
                 verified: false,
+                isAutomatic: true,
+                reason: "Location timeout — auto punch-out",
             });
 
             autoPunchedOut++;

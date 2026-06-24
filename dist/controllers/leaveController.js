@@ -79,13 +79,62 @@ const buildLeaveQuery = (queryParams) => __awaiter(void 0, void 0, void 0, funct
     }
     return query;
 });
+/**
+ * Counts leave days in an inclusive range, excluding Sundays.
+ * Office working days are Mon–Sat, so Sundays don't count against leave.
+ */
+const countLeaveDays = (start, end) => {
+    const s = new Date(start);
+    s.setHours(0, 0, 0, 0);
+    const e = new Date(end);
+    e.setHours(0, 0, 0, 0);
+    if (e < s)
+        return 1;
+    let count = 0;
+    const cur = new Date(s);
+    while (cur <= e) {
+        if (cur.getDay() !== 0)
+            count++; // 0 = Sunday → skipped
+        cur.setDate(cur.getDate() + 1);
+    }
+    return Math.max(count, 1);
+};
 // ─── Request Leave ────────────────────────────────────────────────────────────
 const requestLeave = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     if (!req.user)
         return res.status(401).json({ message: "Unauthorized" });
-    const { type, date, reason, shortLeaveDuration } = req.body;
+    const { type, date, endDate, reason, shortLeaveDuration } = req.body;
     const userId = req.user._id;
     try {
+        // ── Multi-day (date range) rules ───────────────────────────────────────
+        // Only full-day leave types may span multiple days. "short" and "half-day"
+        // are intra-day and must stay single-day.
+        let normalizedEndDate = null;
+        if (endDate) {
+            const start = new Date(date);
+            const end = new Date(endDate);
+            if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+                return res.status(400).json({ success: false, message: "Invalid date(s)" });
+            }
+            // Compare by calendar day (ignore time component)
+            start.setHours(0, 0, 0, 0);
+            end.setHours(0, 0, 0, 0);
+            if (end.getTime() < start.getTime()) {
+                return res.status(400).json({
+                    success: false,
+                    message: "End date cannot be before the start date",
+                });
+            }
+            if (end.getTime() > start.getTime()) {
+                if (type === "short" || type === "half-day") {
+                    return res.status(400).json({
+                        success: false,
+                        message: `${type === "short" ? "Short" : "Half-day"} leave cannot span multiple days`,
+                    });
+                }
+                normalizedEndDate = end;
+            }
+        }
         // ── Short leave rules ──────────────────────────────────────────────────
         if (type === "short") {
             const employeeType = req.user.employeeType;
@@ -133,13 +182,18 @@ const requestLeave = (req, res) => __awaiter(void 0, void 0, void 0, function* (
             }
         }
         // ── Create leave ───────────────────────────────────────────────────────
-        const leave = new leave_1.default(Object.assign({ user: userId, type, date: new Date(date), reason }, (type === "short" && { shortLeaveDuration: Number(shortLeaveDuration) })));
+        const leave = new leave_1.default(Object.assign({ user: userId, type, date: new Date(date), endDate: normalizedEndDate, reason }, (type === "short" && { shortLeaveDuration: Number(shortLeaveDuration) })));
         yield leave.save();
+        // Human-readable span for notifications (e.g. "3-day" leave).
+        // Excludes Sundays — office working days are Mon–Sat.
+        const dayCount = normalizedEndDate
+            ? countLeaveDays(new Date(date), normalizedEndDate)
+            : 1;
         // ── Notify manager (save to DB + FCM) ─────────────────────────────────
         if (req.user.managedBy) {
             const manager = yield user_1.default.findById(req.user.managedBy).select("_id fcmToken").lean();
             if (manager) {
-                (0, notificationService_1.sendAndSave)(manager._id, manager.fcmToken, "Leave Request", `${req.user.name} has requested ${type === "short" ? `${shortLeaveDuration}-hour short` : type} leave`, "leave_request", { leaveId: String(leave._id) }).catch(() => { });
+                (0, notificationService_1.sendAndSave)(manager._id, manager.fcmToken, "Leave Request", `${req.user.name} has requested ${type === "short" ? `${shortLeaveDuration}-hour short` : dayCount > 1 ? `${dayCount}-day ${type}` : type} leave`, "leave_request", { leaveId: String(leave._id) }).catch(() => { });
             }
         }
         res.status(201).json({ success: true, message: "Leave requested", data: leave });

@@ -218,14 +218,11 @@ const getUserAttendance = (req, res) => __awaiter(void 0, void 0, void 0, functi
         const { userId } = req.params; // ← From URL
         const { date, // YYYY-MM-DD
         year, month, // 1-12
-        page = "1", limit = "20" } = req.query;
+         } = req.query;
         // Basic validation
         if (!userId || !mongoose_1.Types.ObjectId.isValid(userId)) {
             return res.status(400).json({ success: false, message: "Invalid userId" });
         }
-        // ====================== Pagination ======================
-        const currentPage = Math.max(1, parseInt(page) || 1);
-        const pageSize = Math.min(100, Math.max(1, parseInt(limit) || 20));
         // ====================== Date Filtering Logic (same as getAttendance) ======================
         let startDate;
         let endDate;
@@ -251,32 +248,30 @@ const getUserAttendance = (req, res) => __awaiter(void 0, void 0, void 0, functi
             startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
             endDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59, 999);
         }
-        // ====================== Count Total Records ======================
-        const totalRecords = yield punch_1.default.countDocuments({
-            user: userId,
-            date: { $gte: startDate, $lte: endDate },
-        });
         // ====================== Fetch Data ======================
+        // The date range is already bounded (a single day / month / year), so a single
+        // user's record set is small. We return EVERY record in the range — no skip/limit —
+        // otherwise a `limit` smaller than 2×(days in month) silently truncates older days
+        // (this is what made the profile list stop ~18 days back) and also corrupts the
+        // monthly Present/Late/Days summary counts.
         const attendanceRecords = yield punch_1.default.find({
             user: userId,
             date: { $gte: startDate, $lte: endDate },
         })
             .populate("user", "name employeeId department") // optional but consistent
             .sort({ date: -1, time: -1 }) // Latest → Oldest
-            .skip((currentPage - 1) * pageSize)
-            .limit(pageSize)
             .lean();
-        const totalPages = Math.ceil(totalRecords / pageSize);
+        const totalRecords = attendanceRecords.length;
         res.status(200).json({
             success: true,
             data: attendanceRecords,
             pagination: {
                 totalRecords,
-                totalPages,
-                currentPage,
-                pageSize,
-                hasNextPage: currentPage < totalPages,
-                hasPrevPage: currentPage > 1,
+                totalPages: 1,
+                currentPage: 1,
+                pageSize: totalRecords,
+                hasNextPage: false,
+                hasPrevPage: false,
             },
             filters: {
                 applied: date ? "day" : year && month ? "month" : year ? "year" : "today",

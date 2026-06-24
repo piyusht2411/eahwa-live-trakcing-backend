@@ -128,6 +128,33 @@ export const updateFcmToken = async (req: AuthRequest, res: Response) => {
   res.json({ success: true });
 };
 
+export const changePassword = async (req: Request, res: Response) => {
+  const { email, newPassword } = req.body;
+
+  if (!email || !newPassword) {
+    return res.status(400).json({ message: "email and newPassword are required" });
+  }
+
+  if (typeof newPassword !== "string" || newPassword.length < 6) {
+    return res.status(400).json({ message: "newPassword must be at least 6 characters" });
+  }
+
+  try {
+    const user = await User.findOne({ email }).select("+password");
+    if (!user) {
+      return res.status(404).json({ message: "User not found" });
+    }
+
+    user.password = newPassword;
+    await user.save(); // pre-save hook in User model auto-hashes the password
+
+    return res.status(200).json({ success: true, message: "Password changed successfully" });
+  } catch (error) {
+    console.error("changePassword error:", error);
+    return res.status(500).json({ message: "Server error" });
+  }
+};
+
 export const login = async (req: Request, res: Response) => {
   const { userName, password, fcmToken } = req.body;
 
