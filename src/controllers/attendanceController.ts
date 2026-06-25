@@ -12,7 +12,8 @@ export const getAttendance = async (req: Request, res: Response) => {
             month,          // 1-12
             userId,         // filter by specific user
             page = "1",
-            limit = "20"
+            limit = "20",
+            groupByDay,     // "true" → one row per employee/day with in/out/total
         } = req.query;
 
         const authUser = req.user!;
@@ -93,13 +94,107 @@ export const getAttendance = async (req: Request, res: Response) => {
             usersQuery._id = { $in: allowedUserIds };
         }
 
-        // ====================== Count Total Records + Fetch Users ======================
-        const [totalRecords, users] = await Promise.all([
-            Punch.countDocuments(query),
-            User.find(usersQuery, { _id: 1, name: 1, employeeId: 1 }).lean(),
-        ]);
+        // Dropdown users (needed by both modes)
+        const users = await User.find(usersQuery, { _id: 1, name: 1, employeeId: 1 }).lean();
 
-        // ====================== Fetch Paginated & Sorted Data ======================
+        const filtersMeta = {
+            applied: date ? "day" : year && month ? "month" : year ? "year" : "today",
+            userId: userId || undefined,
+            date: date || undefined,
+            year: year || undefined,
+            month: month || undefined,
+        };
+
+        // ====================== Day-grouped mode (admin table totals) ======================
+        // Returns ONE row per employee per calendar day, pairing the first punch-in
+        // with the last punch-out and computing worked hours — so the total is always
+        // correct regardless of pagination (unlike pairing raw events client-side).
+        if (groupByDay === "true" || groupByDay === "1") {
+            const allPunches = await Punch.find(query)
+                .populate("user", "name employeeId department")
+                .sort({ time: 1 }) // ascending so first=in, last=out fall out naturally
+                .lean();
+
+            const groupsMap = new Map<string, any>();
+            for (const p of allPunches as any[]) {
+                const uid = p.user?._id ? String(p.user._id) : "unknown";
+                const dayKey = new Date(p.time).toISOString().slice(0, 10); // UTC calendar day
+                const key = `${uid}_${dayKey}`;
+
+                let g = groupsMap.get(key);
+                if (!g) {
+                    g = {
+                        _id: key,
+                        user: p.user,
+                        date: p.date,
+                        punchIn: null,
+                        punchOut: null,
+                    };
+                    groupsMap.set(key, g);
+                }
+
+                if (p.type === "in") {
+                    // earliest punch-in of the day
+                    if (!g.punchIn || new Date(p.time) < new Date(g.punchIn.time)) {
+                        g.punchIn = {
+                            time: p.time, isLate: p.isLate ?? false,
+                            selfie: p.selfie ?? null, location: p.location,
+                        };
+                    }
+                } else {
+                    // latest punch-out of the day
+                    if (!g.punchOut || new Date(p.time) > new Date(g.punchOut.time)) {
+                        g.punchOut = {
+                            time: p.time, isAutomatic: p.isAutomatic ?? false,
+                            selfie: p.selfie ?? null, reason: p.reason ?? null,
+                        };
+                    }
+                }
+            }
+
+            const groups = Array.from(groupsMap.values()).sort(
+                (a, b) => new Date(b.date).getTime() - new Date(a.date).getTime()
+            );
+
+            // Compute total worked hours per group (with the same guards as the app)
+            const MIN_VALID_TS = new Date("2020-01-01T00:00:00Z").getTime();
+            const MAX_SESSION_MS = 24 * 60 * 60 * 1000;
+            for (const g of groups) {
+                let total = "—";
+                if (g.punchIn?.time && g.punchOut?.time) {
+                    const inMs = new Date(g.punchIn.time).getTime();
+                    const outMs = new Date(g.punchOut.time).getTime();
+                    const diff = outMs - inMs;
+                    if (Number.isFinite(inMs) && Number.isFinite(outMs) &&
+                        inMs >= MIN_VALID_TS && diff >= 0 && diff <= MAX_SESSION_MS) {
+                        const mins = Math.floor(diff / 60000);
+                        total = `${Math.floor(mins / 60)}h ${mins % 60}m`;
+                    }
+                }
+                g.totalHours = total;
+            }
+
+            const totalRecords = groups.length;
+            const totalPages = Math.ceil(totalRecords / pageSize);
+            const paged = groups.slice((currentPage - 1) * pageSize, currentPage * pageSize);
+
+            return res.status(200).json({
+                success: true,
+                grouped: true,
+                data: paged,
+                users,
+                pagination: {
+                    totalRecords, totalPages, currentPage, pageSize,
+                    hasNextPage: currentPage < totalPages,
+                    hasPrevPage: currentPage > 1,
+                },
+                filters: filtersMeta,
+            });
+        }
+
+        // ====================== Default: event-log mode (unchanged) ======================
+        const totalRecords = await Punch.countDocuments(query);
+
         const attendanceRecords = await Punch.find(query)
             .populate("user", "name employeeId department")
             .sort({ date: -1, time: -1 })           // ← Latest to oldest
@@ -122,13 +217,7 @@ export const getAttendance = async (req: Request, res: Response) => {
                 hasNextPage: currentPage < totalPages,
                 hasPrevPage: currentPage > 1,
             },
-            filters: {
-                applied: date ? "day" : year && month ? "month" : year ? "year" : "today",
-                userId: userId || undefined,
-                date: date || undefined,
-                year: year || undefined,
-                month: month || undefined,
-            },
+            filters: filtersMeta,
         });
     } catch (error) {
         console.error("Get attendance error:", error);
