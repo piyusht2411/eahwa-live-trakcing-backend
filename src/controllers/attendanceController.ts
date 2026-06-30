@@ -161,6 +161,10 @@ export const getAttendance = async (req: Request, res: Response) => {
             const MAX_SESSION_MS = 24 * 60 * 60 * 1000;
             for (const g of groups) {
                 let total = "—";
+                // anomaly = the in/out pair is logically impossible (out before in,
+                // or an out with no in at all). Surfaced so the admin UI can flag
+                // the row instead of silently showing reversed times.
+                let anomaly = false;
                 if (g.punchIn?.time && g.punchOut?.time) {
                     const inMs = new Date(g.punchIn.time).getTime();
                     const outMs = new Date(g.punchOut.time).getTime();
@@ -169,9 +173,16 @@ export const getAttendance = async (req: Request, res: Response) => {
                         inMs >= MIN_VALID_TS && diff >= 0 && diff <= MAX_SESSION_MS) {
                         const mins = Math.floor(diff / 60000);
                         total = `${Math.floor(mins / 60)}h ${mins % 60}m`;
+                    } else if (Number.isFinite(inMs) && Number.isFinite(outMs) && diff < 0) {
+                        // punch-out recorded BEFORE punch-in — orphan/stale punch-out
+                        anomaly = true;
                     }
+                } else if (g.punchOut?.time && !g.punchIn?.time) {
+                    // punch-out exists for the day but there is no punch-in
+                    anomaly = true;
                 }
                 g.totalHours = total;
+                g.anomaly = anomaly;
             }
 
             const totalRecords = groups.length;

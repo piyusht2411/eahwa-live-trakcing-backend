@@ -7,11 +7,9 @@ import User from "../models/user";
 import { updatePunchSheet } from "../services/googleSheetsService";
 import { AuthRequest } from "../types/authRequest";
 import { closeStaleSession } from "../utils/closeStaleSession";
-import LocationLog from "../models/locationlogs";
-import { getRoadDistance } from "../utils/healper";
+import { persistDailyTravelDistance } from "../utils/persistTravelDistance";
 import Alert from "../models/alert";
 import { sendAnomalyAlert } from "../services/notificationService";
-import Performance from "../models/performance";
 
 const upload = multer({ storage: multer.memoryStorage() });
 
@@ -33,6 +31,21 @@ export const punch = [
         .lean();
       if (latestPunch && latestPunch.type === "in") {
         return res.status(400).json({ message: "Already punched in" });
+      }
+    }
+
+    if (type === "out") {
+      // Prevent an orphan punch-out: there must be an OPEN session (latest punch
+      // today is an "in") before we accept an "out". Without this guard a client
+      // with stale state can record a punch-out with no preceding punch-in, which
+      // produces "punch-out before punch-in" rows in the admin attendance table.
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      const latestPunch = await Punch.findOne({ user: userId, date: { $gte: today } })
+        .sort({ time: -1 })
+        .lean();
+      if (!latestPunch || latestPunch.type !== "in") {
+        return res.status(400).json({ message: "Not punched in" });
       }
     }
 
@@ -81,55 +94,10 @@ export const punch = [
           }
 
           // On punch-out: calculate today's distance and save to user's travelHistory
+          // + Performance (shared with the automatic punch-out paths).
           if (type === "out") {
             try {
-              const today = new Date();
-              today.setHours(0, 0, 0, 0);
-              const endOfDay = new Date();
-              endOfDay.setHours(23, 59, 59, 999);
-
-              const locationLogs = await LocationLog.find({
-                user: userId,
-                timestamp: { $gte: today, $lte: endOfDay },
-              }).sort({ timestamp: 1 }).select("location timestamp").lean();
-
-              const coords = locationLogs.map((l: any) => ({
-                lat: l.location.lat,
-                lng: l.location.lng,
-                timestamp: l.timestamp,
-              }));
-
-              const distanceKm = await getRoadDistance(coords);
-
-              // ── Persist distance in User.travelHistory (primary long-lived store) ──
-              await User.findOneAndUpdate(
-                { _id: userId, "travelHistory.date": today },
-                { $set: { "travelHistory.$.distanceKm": distanceKm } }
-              ).then(async (updated) => {
-                if (!updated) {
-                  await User.findByIdAndUpdate(userId, {
-                    $push: { travelHistory: { date: today, distanceKm } },
-                  });
-                }
-              });
-
-              // ── Also persist in Performance (daily) so reports never lose distance ──
-              // This is a secondary store independent of the LocationLog TTL.
-              const perfEndOfDay = new Date(today);
-              perfEndOfDay.setHours(23, 59, 59, 999);
-              await Performance.findOneAndUpdate(
-                { user: userId, period: "daily", periodStart: today },
-                {
-                  $set: { "metrics.distanceKm": distanceKm },
-                  // $setOnInsert only runs when MongoDB creates a NEW document (upsert).
-                  // Required schema fields must be provided so validation doesn't fail.
-                  $setOnInsert: { periodEnd: perfEndOfDay, score: 0 },
-                },
-                { upsert: true }
-              ).catch((err: any) =>
-                // Non-fatal: travelHistory is already saved.
-                console.error("[Punch Out] Failed to persist distance to Performance:", err)
-              );
+              await persistDailyTravelDistance(String(userId));
             } catch (err) {
               console.error("[Punch Out] Failed to save travel distance:", err);
             }

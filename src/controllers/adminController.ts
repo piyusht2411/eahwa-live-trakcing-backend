@@ -9,6 +9,7 @@ import Task from "../models/task";
 import Break from "../models/break";
 import { haversineDistance, getRoadSegmentDistances } from "../utils/healper";
 import { getManagedUserIdsForScope } from "../utils/accessScope";
+import { persistDailyTravelDistance } from "../utils/persistTravelDistance";
 
 export const getAdminDashboardStats = async (req: AuthRequest, res: Response) => {
     if (!req.user) return res.status(401).json({ message: "Unauthorized" });
@@ -564,12 +565,77 @@ export const autoPunchOut = async (req: AuthRequest, res: Response) => {
                 reason: "Location timeout — auto punch-out",
             });
 
+            // Persist the day's travel distance (same as a manual punch-out).
+            await persistDailyTravelDistance(String(emp.userId)).catch((err) =>
+                console.error("[Auto Punch-Out] Failed to persist travel distance:", err)
+            );
+
             autoPunchedOut++;
         }
 
         res.status(200).json({ success: true, message: `Auto punched out ${autoPunchedOut} employee(s)`, autoPunchedOut });
     } catch (error) {
         console.error("Auto punch-out error:", error);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+};
+
+// POST /api/admin/cron/close-open-sessions
+// Hard end-of-day closer. Unlike autoPunchOut (which only targets inactive ASM
+// users), this closes EVERY open session for the day — any user whose latest
+// punch today is an "in" — so sessions never carry across days regardless of
+// employee mode or location activity. Schedule once near end of working hours.
+export const closeOpenSessions = async (req: AuthRequest, res: Response) => {
+    try {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const now = new Date();
+
+        // Latest punch per user today (ascending sort → last write wins = latest).
+        const punchesToday = await Punch.find({ date: { $gte: today } })
+            .sort({ time: 1 })
+            .lean();
+        const lastByUser = new Map<string, any>();
+        for (const p of punchesToday) {
+            lastByUser.set(p.user.toString(), p);
+        }
+
+        const openUsers = Array.from(lastByUser.entries())
+            .filter(([, p]) => p.type === "in")
+            .map(([uid, p]) => ({ uid, lastPunch: p }));
+
+        let closed = 0;
+        for (const { uid, lastPunch } of openUsers) {
+            // Prefer the most recent known location; fall back to the punch-in location.
+            const lastLog = await LocationLog.findOne({ user: uid })
+                .sort({ timestamp: -1 })
+                .select("location")
+                .lean();
+            const loc = (lastLog as any)?.location || lastPunch.location || { lat: 0, lng: 0 };
+
+            await Punch.create({
+                user: uid,
+                type: "out",
+                date: today,
+                time: now,
+                location: { lat: loc.lat, lng: loc.lng, address: "Auto Punch-Out (end of day)" },
+                selfie: "system",
+                verified: false,
+                isAutomatic: true,
+                reason: "End of day — auto punch-out",
+            });
+
+            // Persist the day's travel distance (same as a manual punch-out).
+            await persistDailyTravelDistance(uid).catch((err) =>
+                console.error("[Close Open Sessions] Failed to persist travel distance:", err)
+            );
+
+            closed++;
+        }
+
+        res.status(200).json({ success: true, message: `Closed ${closed} open session(s)`, closed });
+    } catch (error) {
+        console.error("Close open sessions error:", error);
         res.status(500).json({ success: false, message: "Server error" });
     }
 };

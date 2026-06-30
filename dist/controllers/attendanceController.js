@@ -17,7 +17,7 @@ const punch_1 = __importDefault(require("../models/punch"));
 const user_1 = __importDefault(require("../models/user"));
 const mongoose_1 = require("mongoose");
 const getAttendance = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
-    var _a, _b, _c, _d, _e, _f, _g, _h;
+    var _a, _b, _c, _d, _e, _f, _g, _h, _j, _k;
     try {
         const { date, // YYYY-MM-DD (single day)
         year, month, // 1-12
@@ -149,6 +149,10 @@ const getAttendance = (req, res) => __awaiter(void 0, void 0, void 0, function* 
             const MAX_SESSION_MS = 24 * 60 * 60 * 1000;
             for (const g of groups) {
                 let total = "—";
+                // anomaly = the in/out pair is logically impossible (out before in,
+                // or an out with no in at all). Surfaced so the admin UI can flag
+                // the row instead of silently showing reversed times.
+                let anomaly = false;
                 if (((_g = g.punchIn) === null || _g === void 0 ? void 0 : _g.time) && ((_h = g.punchOut) === null || _h === void 0 ? void 0 : _h.time)) {
                     const inMs = new Date(g.punchIn.time).getTime();
                     const outMs = new Date(g.punchOut.time).getTime();
@@ -158,8 +162,17 @@ const getAttendance = (req, res) => __awaiter(void 0, void 0, void 0, function* 
                         const mins = Math.floor(diff / 60000);
                         total = `${Math.floor(mins / 60)}h ${mins % 60}m`;
                     }
+                    else if (Number.isFinite(inMs) && Number.isFinite(outMs) && diff < 0) {
+                        // punch-out recorded BEFORE punch-in — orphan/stale punch-out
+                        anomaly = true;
+                    }
+                }
+                else if (((_j = g.punchOut) === null || _j === void 0 ? void 0 : _j.time) && !((_k = g.punchIn) === null || _k === void 0 ? void 0 : _k.time)) {
+                    // punch-out exists for the day but there is no punch-in
+                    anomaly = true;
                 }
                 g.totalHours = total;
+                g.anomaly = anomaly;
             }
             const totalRecords = groups.length;
             const totalPages = Math.ceil(totalRecords / pageSize);

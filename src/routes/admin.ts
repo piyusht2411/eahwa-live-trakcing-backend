@@ -1,6 +1,7 @@
 import { Router } from "express";
-import { getAdminDashboardStats, getLiveLocations, getLocationHistory, getEmployeeStats, getInactiveUsers, autoPunchOut, getEmployeePerformance, getEmployeeWeeklyHours, getEmployeeStock } from "../controllers/adminController";
+import { getAdminDashboardStats, getLiveLocations, getLocationHistory, getEmployeeStats, getInactiveUsers, autoPunchOut, closeOpenSessions, getEmployeePerformance, getEmployeeWeeklyHours, getEmployeeStock } from "../controllers/adminController";
 import { protect, authorize } from "../middleware/auth";
+import { cronGuard } from "../middleware/cronGuard";
 
 const router = Router();
 
@@ -14,5 +15,13 @@ router.get("/employees/:id/weekly-hours", protect, authorize("admin", "hr", "man
 router.get("/employees/:id/stock", protect, authorize("admin", "hr", "manager"), getEmployeeStock);
 router.get("/inactive-users", protect, authorize("admin", "hr", "manager"), getInactiveUsers);
 router.post("/auto-punchout", protect, authorize("admin", "hr"), autoPunchOut);
+
+// ── Scheduler-triggered endpoints (cron-job.org) — auth via x-cron-secret header ──
+// Inactivity sweep: auto punch-out ASM users who went location-silent. Run every
+// ~30 min during working hours.
+router.post("/cron/auto-punchout", cronGuard, autoPunchOut);
+// End-of-day closer: close ALL open sessions regardless of mode/activity. Run once
+// near the end of the working day (e.g. 21:00 IST).
+router.post("/cron/close-open-sessions", cronGuard, closeOpenSessions);
 
 export default router;

@@ -12,7 +12,7 @@ var __importDefault = (this && this.__importDefault) || function (mod) {
     return (mod && mod.__esModule) ? mod : { "default": mod };
 };
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.getEmployeeStock = exports.getEmployeeWeeklyHours = exports.getEmployeePerformance = exports.autoPunchOut = exports.getInactiveUsers = exports.getEmployeeStats = exports.getLocationHistory = exports.getLiveLocations = exports.getAdminDashboardStats = void 0;
+exports.getEmployeeStock = exports.getEmployeeWeeklyHours = exports.getEmployeePerformance = exports.closeOpenSessions = exports.autoPunchOut = exports.getInactiveUsers = exports.getEmployeeStats = exports.getLocationHistory = exports.getLiveLocations = exports.getAdminDashboardStats = void 0;
 const user_1 = __importDefault(require("../models/user"));
 const punch_1 = __importDefault(require("../models/punch"));
 const locationlogs_1 = __importDefault(require("../models/locationlogs"));
@@ -22,6 +22,7 @@ const task_1 = __importDefault(require("../models/task"));
 const break_1 = __importDefault(require("../models/break"));
 const healper_1 = require("../utils/healper");
 const accessScope_1 = require("../utils/accessScope");
+const persistTravelDistance_1 = require("../utils/persistTravelDistance");
 const getAdminDashboardStats = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
     if (!req.user)
         return res.status(401).json({ message: "Unauthorized" });
@@ -515,6 +516,8 @@ const autoPunchOut = (req, res) => __awaiter(void 0, void 0, void 0, function* (
                 isAutomatic: true,
                 reason: "Location timeout — auto punch-out",
             });
+            // Persist the day's travel distance (same as a manual punch-out).
+            yield (0, persistTravelDistance_1.persistDailyTravelDistance)(String(emp.userId)).catch((err) => console.error("[Auto Punch-Out] Failed to persist travel distance:", err));
             autoPunchedOut++;
         }
         res.status(200).json({ success: true, message: `Auto punched out ${autoPunchedOut} employee(s)`, autoPunchedOut });
@@ -525,6 +528,58 @@ const autoPunchOut = (req, res) => __awaiter(void 0, void 0, void 0, function* (
     }
 });
 exports.autoPunchOut = autoPunchOut;
+// POST /api/admin/cron/close-open-sessions
+// Hard end-of-day closer. Unlike autoPunchOut (which only targets inactive ASM
+// users), this closes EVERY open session for the day — any user whose latest
+// punch today is an "in" — so sessions never carry across days regardless of
+// employee mode or location activity. Schedule once near end of working hours.
+const closeOpenSessions = (req, res) => __awaiter(void 0, void 0, void 0, function* () {
+    try {
+        const today = new Date();
+        today.setHours(0, 0, 0, 0);
+        const now = new Date();
+        // Latest punch per user today (ascending sort → last write wins = latest).
+        const punchesToday = yield punch_1.default.find({ date: { $gte: today } })
+            .sort({ time: 1 })
+            .lean();
+        const lastByUser = new Map();
+        for (const p of punchesToday) {
+            lastByUser.set(p.user.toString(), p);
+        }
+        const openUsers = Array.from(lastByUser.entries())
+            .filter(([, p]) => p.type === "in")
+            .map(([uid, p]) => ({ uid, lastPunch: p }));
+        let closed = 0;
+        for (const { uid, lastPunch } of openUsers) {
+            // Prefer the most recent known location; fall back to the punch-in location.
+            const lastLog = yield locationlogs_1.default.findOne({ user: uid })
+                .sort({ timestamp: -1 })
+                .select("location")
+                .lean();
+            const loc = (lastLog === null || lastLog === void 0 ? void 0 : lastLog.location) || lastPunch.location || { lat: 0, lng: 0 };
+            yield punch_1.default.create({
+                user: uid,
+                type: "out",
+                date: today,
+                time: now,
+                location: { lat: loc.lat, lng: loc.lng, address: "Auto Punch-Out (end of day)" },
+                selfie: "system",
+                verified: false,
+                isAutomatic: true,
+                reason: "End of day — auto punch-out",
+            });
+            // Persist the day's travel distance (same as a manual punch-out).
+            yield (0, persistTravelDistance_1.persistDailyTravelDistance)(uid).catch((err) => console.error("[Close Open Sessions] Failed to persist travel distance:", err));
+            closed++;
+        }
+        res.status(200).json({ success: true, message: `Closed ${closed} open session(s)`, closed });
+    }
+    catch (error) {
+        console.error("Close open sessions error:", error);
+        res.status(500).json({ success: false, message: "Server error" });
+    }
+});
+exports.closeOpenSessions = closeOpenSessions;
 // GET /api/admin/employees/:id/performance
 // Returns latest monthly performance metrics shaped for a radar chart
 const getEmployeePerformance = (req, res) => __awaiter(void 0, void 0, void 0, function* () {

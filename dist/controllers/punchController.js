@@ -19,11 +19,9 @@ const punch_1 = __importDefault(require("../models/punch"));
 const user_1 = __importDefault(require("../models/user"));
 const googleSheetsService_1 = require("../services/googleSheetsService");
 const closeStaleSession_1 = require("../utils/closeStaleSession");
-const locationlogs_1 = __importDefault(require("../models/locationlogs"));
-const healper_1 = require("../utils/healper");
+const persistTravelDistance_1 = require("../utils/persistTravelDistance");
 const alert_1 = __importDefault(require("../models/alert"));
 const notificationService_1 = require("../services/notificationService");
-const performance_1 = __importDefault(require("../models/performance"));
 const upload = (0, multer_1.default)({ storage: multer_1.default.memoryStorage() });
 exports.punch = [
     upload.single("selfie"),
@@ -42,6 +40,20 @@ exports.punch = [
                 .lean();
             if (latestPunch && latestPunch.type === "in") {
                 return res.status(400).json({ message: "Already punched in" });
+            }
+        }
+        if (type === "out") {
+            // Prevent an orphan punch-out: there must be an OPEN session (latest punch
+            // today is an "in") before we accept an "out". Without this guard a client
+            // with stale state can record a punch-out with no preceding punch-in, which
+            // produces "punch-out before punch-in" rows in the admin attendance table.
+            const today = new Date();
+            today.setHours(0, 0, 0, 0);
+            const latestPunch = yield punch_1.default.findOne({ user: userId, date: { $gte: today } })
+                .sort({ time: -1 })
+                .lean();
+            if (!latestPunch || latestPunch.type !== "in") {
+                return res.status(400).json({ message: "Not punched in" });
             }
         }
         try {
@@ -82,42 +94,10 @@ exports.punch = [
                         }
                     }
                     // On punch-out: calculate today's distance and save to user's travelHistory
+                    // + Performance (shared with the automatic punch-out paths).
                     if (type === "out") {
                         try {
-                            const today = new Date();
-                            today.setHours(0, 0, 0, 0);
-                            const endOfDay = new Date();
-                            endOfDay.setHours(23, 59, 59, 999);
-                            const locationLogs = yield locationlogs_1.default.find({
-                                user: userId,
-                                timestamp: { $gte: today, $lte: endOfDay },
-                            }).sort({ timestamp: 1 }).select("location timestamp").lean();
-                            const coords = locationLogs.map((l) => ({
-                                lat: l.location.lat,
-                                lng: l.location.lng,
-                                timestamp: l.timestamp,
-                            }));
-                            const distanceKm = yield (0, healper_1.getRoadDistance)(coords);
-                            // ── Persist distance in User.travelHistory (primary long-lived store) ──
-                            yield user_1.default.findOneAndUpdate({ _id: userId, "travelHistory.date": today }, { $set: { "travelHistory.$.distanceKm": distanceKm } }).then((updated) => __awaiter(void 0, void 0, void 0, function* () {
-                                if (!updated) {
-                                    yield user_1.default.findByIdAndUpdate(userId, {
-                                        $push: { travelHistory: { date: today, distanceKm } },
-                                    });
-                                }
-                            }));
-                            // ── Also persist in Performance (daily) so reports never lose distance ──
-                            // This is a secondary store independent of the LocationLog TTL.
-                            const perfEndOfDay = new Date(today);
-                            perfEndOfDay.setHours(23, 59, 59, 999);
-                            yield performance_1.default.findOneAndUpdate({ user: userId, period: "daily", periodStart: today }, {
-                                $set: { "metrics.distanceKm": distanceKm },
-                                // $setOnInsert only runs when MongoDB creates a NEW document (upsert).
-                                // Required schema fields must be provided so validation doesn't fail.
-                                $setOnInsert: { periodEnd: perfEndOfDay, score: 0 },
-                            }, { upsert: true }).catch((err) => 
-                            // Non-fatal: travelHistory is already saved.
-                            console.error("[Punch Out] Failed to persist distance to Performance:", err));
+                            yield (0, persistTravelDistance_1.persistDailyTravelDistance)(String(userId));
                         }
                         catch (err) {
                             console.error("[Punch Out] Failed to save travel distance:", err);
